@@ -408,7 +408,7 @@ class AllowPrefixTest(unittest.TestCase):
         self.assertEqual([h["share_path"] for h in result["hits"]],
                          ["/archive/notePC/a.txt", "/archive"])
         self.assertIsNone(result["total"], "範囲外の件数を漏らさない")
-        self.assertEqual(result["next_offset"], len(self.PATHS))
+        self.assertIsNone(result["next_offset"], "API の結果が終わっている")
 
     def test_dotdot_never_escapes_into_allowed_prefix(self):
         self.assertFalse(cli.path_allowed("/archive/../homes/x", ["/homes"]))

@@ -16,7 +16,7 @@ import shlex
 import subprocess
 import sys
 
-VERSION = "0.1.0"
+VERSION = "0.2.0"
 SCHEMA_VERSION = 1
 
 EXIT_OK = 0
@@ -134,23 +134,28 @@ def parse_result(stdout):
 
 
 def collect(runner, ssh_bin, host, key, query, offset, max_results, timeout):
-    """ページを順に取り、最大 max_results 件まで集める（範囲外は NAS 側で除外済み）。"""
+    """ページを順に取り、最大 max_results 件まで集める（範囲外は NAS 側で除外済み）。
+
+    1回に頼む件数を「あと何件必要か」に合わせるので、取った結果を捨てることはない。
+    最後の next_offset から呼べば、取りこぼしなく続きが取れる。
+    """
     hits = []
     has_error = False
     next_offset = offset
     pages = 0
     while next_offset is not None and len(hits) < max_results and pages < MAX_PAGES:
+        size = min(PAGE_SIZE, max_results - len(hits))
         code, stdout, stderr = call_remote(
-            runner, ssh_bin, host, key, search_command(query, PAGE_SIZE, next_offset), timeout)
+            runner, ssh_bin, host, key, search_command(query, size, next_offset), timeout)
         if code != EXIT_OK:
             return code, None, stderr
         page = parse_result(stdout)
+        if len(page["hits"]) > size:
+            raise ClientError("response", "NAS が頼んだ件数より多く返しました", EXIT_RESPONSE)
         hits.extend(page["hits"])
         has_error = has_error or bool(page.get("has_error"))
         next_offset = page.get("next_offset")
         pages += 1
-    if len(hits) > max_results:
-        hits = hits[:max_results]  # 切り捨てた分は next_offset で取り直せないので注意書きを付ける
     return EXIT_OK, {
         "schema_version": SCHEMA_VERSION,
         "query": query,
@@ -191,8 +196,9 @@ def build_parser():
 
 def validate(args):
     if args.status:
-        if args.query is not None:
-            raise ClientError("usage", "--status と検索語は同時に指定できません", EXIT_USAGE)
+        if args.query is not None or args.max_results is not None or args.offset:
+            raise ClientError("usage", "--status は検索語・--max-results・--offset と同時に指定できません",
+                              EXIT_USAGE)
         return
     if args.query is None or not args.query.strip():
         raise ClientError("usage", "検索語を指定してください", EXIT_USAGE)

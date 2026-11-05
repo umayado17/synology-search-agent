@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 SCHEMA_VERSION = 1
 
 # NAS自身へのループバック接続専用。外部ホストに書き換えて流用しないこと。
@@ -298,25 +298,97 @@ def path_allowed(share_path, prefixes):
     return any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
 
 
-def build_result(query, limit, offset, data, allow_prefixes=None):
+def build_result(query, limit, offset, data):
+    """絞り込みなしの結果。offset は API の位置そのまま。"""
     raw_hits = data.get("hits", [])
     hits = [normalize_hit(item) for item in raw_hits]
-    filtered = bool(allow_prefixes)
-    if filtered:
-        hits = [hit for hit in hits if path_allowed(hit["share_path"], allow_prefixes)]
     unavailable = data.get("unavail")
     return {
         "schema_version": SCHEMA_VERSION,
         "query": query,
         "offset": offset,
         "limit": limit,
-        # 絞り込み時は範囲外の件数を漏らさないため null
-        "total": None if filtered else to_int(data.get("total")),
+        "total": to_int(data.get("total")),
         "returned": len(hits),
         # 次ページの offset。API が limit 件そろえて返したときだけ続きがあり得る
         "next_offset": offset + len(raw_hits) if len(raw_hits) >= limit else None,
         "has_error": to_bool(data.get("has_error")),
         "unavailable": unavailable if isinstance(unavailable, list) else None,
+        "hits": hits,
+    }
+
+
+SCAN_PAGE_SIZE = 100    # 絞り込み時に API から1回で読む件数
+MAX_SCAN_PAGES = 20     # 1回の検索で読む上限（2,000件）
+SCAN_CACHE_SIZE = 32    # 続きのページ用に覚えておく検索語の数
+SCAN_TIME_BUDGET = 40   # 1回の検索で読み進める上限秒（入口の待ち時間 75 秒より短く）
+
+
+def search_filtered(transport, sid, query, limit, offset, prefixes, checkpoints=None,
+                    clock=time.monotonic):
+    """許可範囲内の結果だけでページを作る。
+
+    offset と next_offset は「許可範囲内で何件目か」で数える。API の位置や範囲外の件数は
+    結果に出さない（total と unavailable は常に null）。
+    checkpoints（dict）を渡すと、検索語ごとに「許可範囲内で何件読んだか・API のどこまで
+    読んだか」を覚え、続きのページを途中から読む。
+    """
+    allowed_seen, raw_pos = 0, 0
+    if checkpoints is not None:
+        saved = checkpoints.pop(query, None)
+        if saved and saved[0] <= offset:
+            allowed_seen, raw_pos = saved
+    hits = []
+    has_error = False
+    more = False
+    pages = 0
+    started = clock()
+    while True:
+        if pages >= MAX_SCAN_PAGES or (pages and clock() - started > SCAN_TIME_BUDGET):
+            more = True
+            break
+        data = search(transport, sid, query, SCAN_PAGE_SIZE, raw_pos)
+        pages += 1
+        has_error = has_error or bool(to_bool(data.get("has_error")))
+        raw_hits = data.get("hits", [])
+        stop_at = None
+        for index, item in enumerate(raw_hits):
+            hit = normalize_hit(item)
+            if not path_allowed(hit["share_path"], prefixes):
+                continue
+            if allowed_seen >= offset:
+                if len(hits) == limit:
+                    stop_at = index  # 許可範囲内の次の1件。ここから続きを読む
+                    break
+                hits.append(hit)
+            allowed_seen += 1
+        if stop_at is not None:
+            raw_pos += stop_at
+            more = True
+            break
+        raw_pos += len(raw_hits)
+        if len(raw_hits) < SCAN_PAGE_SIZE:
+            break  # API の結果の終わり
+    if checkpoints is not None:
+        checkpoints[query] = (allowed_seen, raw_pos)
+        while len(checkpoints) > SCAN_CACHE_SIZE:
+            checkpoints.pop(next(iter(checkpoints)))
+    if more and not hits:  # 上限まで読んでも1件も見つからず、先へ進めなかった
+        raise CliError(
+            "scan_limit",
+            "範囲外の結果が多く、指定の位置まで読み進められませんでした。"
+            "検索セッションを使っている場合は、同じ呼び出しを繰り返すと続きから読みます",
+            EXIT_API)
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "query": query,
+        "offset": offset,
+        "limit": limit,
+        "total": None,
+        "returned": len(hits),
+        "next_offset": offset + len(hits) if more else None,
+        "has_error": has_error,
+        "unavailable": None,
         "hits": hits,
     }
 
@@ -494,7 +566,13 @@ def run(args, transport, prompter, stdout, stderr, socket_path):
     try:
         sid = login(transport, username, password, otp)
         password = otp = None
-        data = search(transport, sid, args.query, args.limit, args.offset)
+        if args.allow_prefix:
+            result = search_filtered(transport, sid, args.query, args.limit, args.offset,
+                                     args.allow_prefix)
+        else:
+            data = search(transport, sid, args.query, args.limit, args.offset)
+            result = None if args.raw else build_result(
+                args.query, args.limit, args.offset, data)
     finally:
         password = otp = None
         if sid and not logout(transport, sid):
@@ -505,7 +583,6 @@ def run(args, transport, prompter, stdout, stderr, socket_path):
         print(json.dumps({"schema_version": SCHEMA_VERSION, "query": args.query,
                           "raw": data}, ensure_ascii=False), file=stdout)
     else:
-        result = build_result(args.query, args.limit, args.offset, data, args.allow_prefix)
         if as_json:
             print(json.dumps(result, ensure_ascii=False), file=stdout)
         else:
@@ -680,6 +757,7 @@ class Broker:
         self.stopping = False
         self.stop_reason = None
         self.log = log or (lambda event, **fields: None)
+        self.checkpoints = {}  # 続きのページ用。検索語 → (許可範囲内で読んだ件数, API の位置)
 
     def status(self):
         return {
@@ -731,14 +809,15 @@ class Broker:
         if not is_int(offset) or not 0 <= offset <= MAX_OFFSET:
             return error_payload(CliError("usage", "offset は0〜%d" % MAX_OFFSET, EXIT_USAGE))
         try:
-            data = search(self.transport, self._sid, query, limit, offset)
+            result = search_filtered(self.transport, self._sid, query, limit, offset,
+                                     self.allow_prefixes, self.checkpoints)
         except CliError as exc:
-            self._record_failure(exc)
+            if exc.kind != "scan_limit":  # 読み進める上限に達しただけ。NAS の障害ではない
+                self._record_failure(exc)
             self.log("search_failed", type=exc.kind, api_code=exc.api_code)
             return error_payload(exc)
         self.failures = 0
         self.searches += 1
-        result = build_result(query, limit, offset, data, self.allow_prefixes)
         self.log("search", returned=result["returned"])
         return {"ok": True, "result": result}
 

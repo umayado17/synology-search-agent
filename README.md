@@ -13,6 +13,7 @@ Synology NAS の **Universal Search（全文検索）の既存インデックス
 ## 動作確認済みの環境
 
 - Synology DS225+、DSM 7.4.1（build 90080）、NAS 側 Python 3.8.15
+- 状態: β版。8時間以上の連続運用や、他の機種での動作は未確認
 - 確認した内容は [docs/verification.md](docs/verification.md)
 
 他の機種・DSM バージョンでは未確認です。まず `--check-api` で API があるか確かめてください。
@@ -23,7 +24,7 @@ Synology NAS の **Universal Search（全文検索）の既存インデックス
 AIエージェント ──ssh（検索専用の鍵）──▶ NAS: synosearch --agent-gateway
    nas-search                                   │（UNIXソケット）
                                                 ▼
-                                     検索セッション（本人が1日1回ログイン）
+                                     検索セッション（本人が OTP で開始）
                                                 │
                                                 ▼
                                      DSM Web API（127.0.0.1:5001）
@@ -49,7 +50,7 @@ ssh -t <ssh-user>@<nas-host> '~/.local/bin/synosearch "test" --limit 20 --json'
 
 ### 2. AI エージェントから使う
 
-1. 人が NAS で検索セッションを始める（OTP を入力。最長 24 時間、既定 8 時間）
+1. 人が NAS で検索セッションを始める（パスワードと OTP を入力）。期限は既定 8 時間（1分〜24時間で指定可）。期限が切れたら、また人が始め直す
 2. エージェントは検索専用の SSH 鍵で `nas-search "検索語"` を呼ぶ。パスワードも OTP も不要
 
 ```bash
@@ -64,7 +65,7 @@ nas-search --status
 - パスワード・OTP・SID はファイルにもログにも残しません。SID は検索セッションのメモリの中だけに置きます
 - 検索セッションへの接続は、本人だけが読めるソケット（0600）からに限ります
 - エージェント用の鍵は `authorized_keys` の `restrict,command=` で検索しかできません。シェル・ポート転送は使えません
-- 検索範囲は二重に絞ります。DSM の共有フォルダ権限と、CLI の `--allow-prefix` です
+- 検索範囲は二重に絞ります。主な守りは DSM の共有フォルダ権限で、CLI の `--allow-prefix` は補助です。絞り込み時は範囲外の件数を結果に出しません
 - 検索専用の DSM アカウント（管理者でない・2段階認証あり）を使うことを推奨します
 
 詳しい検討は [docs/design-noninteractive-auth.md](docs/design-noninteractive-auth.md) にあります。

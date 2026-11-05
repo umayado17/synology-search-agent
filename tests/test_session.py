@@ -63,7 +63,8 @@ class BrokerUnitTest(unittest.TestCase):
         result = response["result"]
         self.assertEqual([h["share_path"] for h in result["hits"]], ["/archive/Drive/a.doc"])
         self.assertIsNone(result["total"])
-        self.assertEqual(result["next_offset"], 3)
+        self.assertIsNone(result["next_offset"], "API の結果が3件で終わり")
+        self.assertIsNone(result["unavailable"])
         self.assertEqual(transport.calls[0][1]["_sid"], "dummy-sid-ABC123")
 
     def test_status_never_contains_sid(self):

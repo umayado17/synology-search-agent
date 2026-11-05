@@ -137,7 +137,8 @@ class ClientBehaviourTest(ClientTestBase):
         for argv in ([], ["  "], ["q", "--limit", "0"], ["q", "--limit", "101"],
                      ["q", "--offset", "-1"], ["q", "--max-results", "0"],
                      ["q", "--max-results", "1001"], ["q", "--status"], ["q", "--lim", "5"],
-                     ["q", "--unknown"], ["x" * 1001]):
+                     ["q", "--unknown"], ["x" * 1001], ["--status", "--max-results", "10"],
+                     ["--status", "--offset", "5"]):
             with self.subTest(argv=argv):
                 code, out, err, runner = self.run_client(argv, [])
                 self.assertEqual(code, client.EXIT_USAGE)
@@ -178,18 +179,45 @@ class ConfigTest(ClientTestBase):
 
 
 class MaxResultsTest(ClientTestBase):
-    def test_pages_until_enough(self):
-        first = page([{"share_path": "/p/%d" % i} for i in range(60)], next_offset=100)
-        second = page([{"share_path": "/p/x%d" % i} for i in range(70)], next_offset=200)
+    def test_asks_only_for_what_is_still_needed(self):
+        """要求件数を超えて取らない。だから切り捨てがなく、next_offset から続きが取れる。"""
+        first = page([{"share_path": "/p/%d" % i} for i in range(100)], next_offset=100)
+        second = page([{"share_path": "/p/x%d" % i} for i in range(20)], next_offset=120)
         code, out, err, runner = self.run_client(["q", "--max-results", "120"],
                                                  [(0, first, ""), (0, second, "")])
         self.assertEqual(code, 0, err)
         result = json.loads(out)
         self.assertEqual(result["returned"], 120)
         self.assertEqual(result["pages_fetched"], 2)
-        self.assertEqual(result["next_offset"], 200)
+        self.assertEqual(result["next_offset"], 120)
         self.assertEqual(runner.remote_commands(), [
-            "search --limit 100 --offset 0 -- q", "search --limit 100 --offset 100 -- q"])
+            "search --limit 100 --offset 0 -- q", "search --limit 20 --offset 100 -- q"])
+
+    def test_small_max_results_is_one_exact_page(self):
+        code, out, _, runner = self.run_client(
+            ["q", "--max-results", "50"],
+            [(0, page([{"share_path": "/p/%d" % i} for i in range(50)], next_offset=50), "")])
+        self.assertEqual(code, 0)
+        self.assertEqual(runner.remote_commands(), ["search --limit 50 --offset 0 -- q"])
+        result = json.loads(out)
+        self.assertEqual((result["returned"], result["next_offset"]), (50, 50))
+
+    def test_short_pages_keep_going_without_gaps(self):
+        """範囲外を除いて少なく返っても、next_offset どおりに続きを頼む。"""
+        first = page([{"share_path": "/p/a"}] * 30, next_offset=30)
+        second = page([{"share_path": "/p/b"}] * 10, next_offset=None)
+        code, out, _, runner = self.run_client(["q", "--max-results", "100"],
+                                                [(0, first, ""), (0, second, "")])
+        self.assertEqual(code, 0)
+        self.assertEqual(runner.remote_commands(), [
+            "search --limit 100 --offset 0 -- q", "search --limit 70 --offset 30 -- q"])
+        self.assertIsNone(json.loads(out)["next_offset"])
+
+    def test_page_larger_than_requested_is_response_error(self):
+        code, _, err, _ = self.run_client(
+            ["q", "--max-results", "5"], [(0, page([{}] * 6, next_offset=6), "")])
+        self.assertEqual(code, client.EXIT_RESPONSE)
+        self.assertEqual(json.loads(err)["error"]["type"], "response")
 
     def test_stops_at_end(self):
         code, out, _, runner = self.run_client(

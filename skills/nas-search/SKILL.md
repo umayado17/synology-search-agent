@@ -1,11 +1,11 @@
 ---
 name: nas-search
-description: Search the user's Synology NAS archive (old PC backups indexed by Universal Search) by file name and full text, and get JSON results with paths, sizes and dates. Use when the user asks to find, locate or list files or documents in their NAS / archive / old backups / 昔のPCのバックアップ, or asks "NASにあった〇〇の資料を探して". Read-only; it cannot open, change or delete files.
+description: Search files on the user's Synology NAS through its Universal Search index (file names and full text) and get JSON results with paths, sizes and dates. Use when the user asks to find, locate or list files or documents stored on their NAS, file server, archive or backups (e.g. "NASにある〇〇の資料を探して"). Read-only; it cannot open, change or delete files.
 ---
 
 # nas-search: NAS のアーカイブを検索する
 
-`nas-search` は、NAS の Universal Search（全文検索インデックス）を SSH 経由で検索し、結果を JSON で返すコマンドです。対象は、本人が許可した共有フォルダ（例 `/archive`）の中だけです。
+`nas-search` は、Synology NAS の Universal Search（全文検索インデックス）を SSH 経由で検索し、結果を JSON で返すコマンドです。対象は、本人が許可した共有フォルダ（例 `/archive`）の中だけです。
 
 ## できること / できないこと
 
@@ -41,7 +41,8 @@ nas-search --status                          # 検索セッションの状態（
 
 - `share_path` をユーザーへの説明に使う（`path` は NAS 内部の絶対パス）
 - `total` は常に `null`（範囲外の件数を漏らさないため）。続きがあるかは `next_offset` が `null` でないかで判断
-- `returned` が `limit` より少なくても、`next_offset` があれば続きがある（範囲外の結果を除いた分だけ減る）
+- `offset`・`next_offset` は許可範囲内での件数。`next_offset` をそのまま次の `--offset` に使えば、抜けも重複もない
+- `--max-results` の結果も、最後の `next_offset` から続きを取れる
 - `modified` は UNIX 秒、`modified_utc` は UTC。日本時間で伝えるときは +9 時間
 
 ## 終了コードと対応
@@ -50,7 +51,7 @@ nas-search --status                          # 検索セッションの状態（
 |---|---|---|
 | 0 | 成功 | 結果を使う（0件もあり得る） |
 | 2 | 使い方の誤り | stderr の `message` を読んで引数を直す。同じ呼び出しを繰り返さない |
-| 4 | NAS の検索 API がエラー | 1回だけ再試行。続くならユーザーに報告 |
+| 4 | NAS の検索 API がエラー、または `scan_limit`（範囲外が多く読み進められない） | 1回だけ再試行（`scan_limit` は続きから読む）。続くならユーザーに報告 |
 | 5 | SSH 接続・応答なし | NAS やネットワークが止まっている可能性。ユーザーに報告 |
 | 6 | 応答形式が想定外 | ユーザーに報告（NAS の更新などで API が変わった可能性） |
 | 8 | 検索セッションが無い・期限切れ | **ユーザーに「NAS の検索セッションを開始してください」と頼む**。自分でログインしようとしない |
