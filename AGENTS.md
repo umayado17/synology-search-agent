@@ -2,7 +2,7 @@
 
 ## 目的と範囲
 
-`synosearch` は Synology NAS の Universal Search インデックスを使う、sudo 不要の検索 CLI です。ファイルの更新やインデックスの変更はしません。
+`unisearch` は Synology NAS の Universal Search インデックスを使う、sudo 不要の検索 CLI です。ファイルの更新やインデックスの変更はしません。
 
 ## 動作が確認できた API の条件（変える前に docs/verification.md を読む）
 

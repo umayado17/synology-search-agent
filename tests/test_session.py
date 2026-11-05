@@ -14,7 +14,7 @@ import time
 import unittest
 import unittest.mock
 
-from test_synosearch import (FakePrompter, FakeTransport, LOGIN_OK, LOGOUT_OK, SECRETS,
+from test_unisearch import (FakePrompter, FakeTransport, LOGIN_OK, LOGOUT_OK, SECRETS,
                              cli, fixture)
 
 ALLOWED = "/archive"
@@ -127,8 +127,8 @@ class SessionIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.tmp = short_tempdir()
         self.state = os.path.join(self.tmp, "state")
-        self.env = {"SYNOSEARCH_STATE_DIR": self.state,
-                    "SYNOSEARCH_CONFIG": os.path.join(self.state, "none.conf")}
+        self.env = {"UNISEARCH_STATE_DIR": self.state,
+                    "UNISEARCH_CONFIG": os.path.join(self.state, "none.conf")}
         self.sock = cli.socket_path_in(self.state)
         self.transport = FakeTransport({"login": LOGIN_OK, "search": mixed_response(),
                                         "logout": LOGOUT_OK})
@@ -260,8 +260,8 @@ class SessionIntegrationTest(unittest.TestCase):
 class NoSessionTest(unittest.TestCase):
     def setUp(self):
         self.tmp = short_tempdir()
-        self.env = {"SYNOSEARCH_STATE_DIR": os.path.join(self.tmp, "state"),
-                    "SYNOSEARCH_CONFIG": os.path.join(self.tmp, "none.conf")}
+        self.env = {"UNISEARCH_STATE_DIR": os.path.join(self.tmp, "state"),
+                    "UNISEARCH_CONFIG": os.path.join(self.tmp, "none.conf")}
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -273,7 +273,7 @@ class NoSessionTest(unittest.TestCase):
         self.assertEqual(code, cli.EXIT_SESSION_REQUIRED)
 
     def test_stale_socket_is_replaced_on_start(self):
-        state = self.env["SYNOSEARCH_STATE_DIR"]
+        state = self.env["UNISEARCH_STATE_DIR"]
         os.mkdir(state, 0o700)
         path = cli.socket_path_in(state)
         stale = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -311,7 +311,7 @@ class NoSessionTest(unittest.TestCase):
                         transport=transport, prompter=FakePrompter(), stdout=io.StringIO(),
                         stderr=io.StringIO(), environ=self.env, daemonize=False)
         self.assertEqual(code, cli.EXIT_AUTH)
-        self.assertFalse(os.path.exists(cli.socket_path_in(self.env["SYNOSEARCH_STATE_DIR"])))
+        self.assertFalse(os.path.exists(cli.socket_path_in(self.env["UNISEARCH_STATE_DIR"])))
 
     def test_parse_gateway_command(self):
         self.assertEqual(cli.parse_gateway_command("status"), ("status", None))
@@ -335,7 +335,7 @@ class DaemonizeTest(unittest.TestCase):
 
     def test_detached_broker_survives_parent_return(self):
         tmp = short_tempdir()
-        env = {"SYNOSEARCH_STATE_DIR": os.path.join(tmp, "state")}
+        env = {"UNISEARCH_STATE_DIR": os.path.join(tmp, "state")}
         try:
             transport = FakeTransport({"login": LOGIN_OK, "search": mixed_response(),
                                        "logout": LOGOUT_OK})
@@ -354,7 +354,7 @@ class DaemonizeTest(unittest.TestCase):
             code = cli.main(["session", "stop"], stdout=io.StringIO(), stderr=io.StringIO(),
                             environ=env)
             self.assertEqual(code, 0)
-            sock = cli.socket_path_in(env["SYNOSEARCH_STATE_DIR"])
+            sock = cli.socket_path_in(env["UNISEARCH_STATE_DIR"])
             deadline = time.time() + 5
             while os.path.exists(sock) and time.time() < deadline:
                 time.sleep(0.05)

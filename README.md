@@ -29,7 +29,7 @@ Synology NAS の **Universal Search（全文検索）の既存インデックス
 ## 構成
 
 ```
-AIエージェント ──ssh（検索専用の鍵）──▶ NAS: synosearch --agent-gateway
+AIエージェント ──ssh（検索専用の鍵）──▶ NAS: unisearch --agent-gateway
    nas-search                                   │（UNIXソケット）
                                                 ▼
                                      検索セッション（本人が OTP で開始）
@@ -40,7 +40,7 @@ AIエージェント ──ssh（検索専用の鍵）──▶ NAS: synosearch 
 
 | ファイル | 役割 |
 |---|---|
-| [`synosearch`](synosearch) | NAS 上で動く本体。対話検索、検索セッション、SSH 入口 |
+| [`unisearch`](unisearch) | NAS 上で動く本体。対話検索、検索セッション、SSH 入口 |
 | [`clients/nas-search`](clients/nas-search) | エージェント側のコマンド。ssh を組み立てて結果を返す |
 | [`skills/nas-search/SKILL.md`](skills/nas-search/SKILL.md) | エージェント向けの説明書（Claude Code のスキル形式） |
 | [`scripts/remote-run.sh`](scripts/remote-run.sh) | NAS にファイルを置かずに試すためのスクリプト |
@@ -48,7 +48,7 @@ AIエージェント ──ssh（検索専用の鍵）──▶ NAS: synosearch 
 ## 使う前の準備（NAS 側）
 
 1. **エージェントから NAS に SSH で届くようにする。** 作者は [Tailscale](https://tailscale.com/) を使い、NAS をインターネットに公開していません（[背景編の0章](docs/background.md#0-前提エージェントから-nas-に届く道)）
-2. **API が使えるか確かめる。** CLI を NAS に置いたあと（[導入手順](docs/agent-setup.md)の1）、NAS の上で `~/.local/bin/synosearch --check-api` を実行します。ログインは要りません。必要な API があって、対応するバージョンなら `"ok": true` が返ります。索引の中身や、検索が実際にできるかまでは確かめません
+2. **API が使えるか確かめる。** CLI を NAS に置いたあと（[導入手順](docs/agent-setup.md)の1）、NAS の上で `~/.local/bin/unisearch --check-api` を実行します。ログインは要りません。必要な API があって、対応するバージョンなら `"ok": true` が返ります。索引の中身や、検索が実際にできるかまでは確かめません
 3. **Universal Search を確かめる（`--check-api` が失敗したとき）。** DSM 7 では、Universal Search は通常、最初から入っています。DSM 7 の標準の機能で、パッケージセンターからは削除できないパッケージとして扱われています。ただし、すべての機種で必ず入っていると、公式に書かれてはいません。DSM の「パッケージセンター」→「インストール済み」に「Universal Search」があるか、止まっていないかを見てください。無ければパッケージセンターからインストールします
 4. **索引を作る共有フォルダを指定する。** Universal Search の設定（右上の歯車）→「File Indexing」→「Indexed Folder List」で、検索させたいフォルダを追加します。**指定しないと索引は作られず、検索しても何も返りません。** Synology の公式ヘルプでも、索引を作っていないフォルダのファイルは結果に出ず、File Station や SMB で使うフォルダは自分で追加する必要があるとされています（[File Indexing](https://kb.synology.com/en-global/DSM/help/SynoFinder/universalsearch_index?version=7)）。本文まで検索するには、方法に「File content indexing」を選びます
 5. **検索専用の DSM アカウントを作る。** 管理者にしない、2段階認証をかける、検索させたい共有フォルダだけを読めるようにします。`homes` を読めるようにすると、全員のホームフォルダが結果に出るので注意してください
@@ -61,15 +61,15 @@ AIエージェント ──ssh（検索専用の鍵）──▶ NAS: synosearch 
 > Universal Search 2.0（2026年6月）は、今のところ一部の上位機種だけに入れられます（[Release Notes](https://www.synology.com/en-global/releaseNote/SynoFinder)）。このツールは 2.0 では試していません。
 
 > [!NOTE]
-> DSM には、名前が同じ `/usr/syno/bin/synosearch`（ヘルプを検索するコマンド）があります。このツールとは別物です。PATH の順番によっては DSM の方が動くので、`~/.local/bin/synosearch` のように場所まで書いて実行してください。
+> このツールのコマンド名は `unisearch` です。v0.6 までは `synosearch` でしたが、DSM にもとからある `/usr/syno/bin/synosearch`（ヘルプを検索する別のコマンド）と同じ名前だったので変えました。古い名前で入れている場合は、[導入手順](docs/agent-setup.md#古い名前synosearchから移るとき)を見てください。
 
 ## 使い方
 
 ### 1. 対話で検索する（人が使う）
 
 ```bash
-ssh -t <ssh-user>@<nas-host> '~/.local/bin/synosearch "test" --limit 5'
-ssh -t <ssh-user>@<nas-host> '~/.local/bin/synosearch "test" --limit 20 --json'
+ssh -t <ssh-user>@<nas-host> '~/.local/bin/unisearch "test" --limit 5'
+ssh -t <ssh-user>@<nas-host> '~/.local/bin/unisearch "test" --limit 20 --json'
 ```
 
 ユーザー名・DSM パスワード・OTP を端末から入力します。毎回ログインしてログアウトします。
@@ -102,8 +102,8 @@ nas-search --status
 
 | 場所 | ファイル | 主な設定 |
 |---|---|---|
-| NAS | `~/.config/synosearch/server.conf` | セッションの有効期間・keepalive・各タイムアウト |
-| エージェント側 | `~/.config/synosearch/client.conf` | 接続先・鍵・待ち時間 |
+| NAS | `~/.config/unisearch/server.conf` | セッションの有効期間・keepalive・各タイムアウト |
+| エージェント側 | `~/.config/unisearch/client.conf` | 接続先・鍵・待ち時間 |
 
 一覧は [docs/cli-spec.md](docs/cli-spec.md) の「設定ファイル」にあります。
 

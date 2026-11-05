@@ -13,17 +13,17 @@ NAS 上のファイルを追加・変更する手順です。**すべて本人�
 ## 1. CLI を NAS に置く（<ssh-user> のホームのみ）
 
 ```bash
-ssh <ssh-user>@<nas-host> 'mkdir -p ~/.local/bin && cat > ~/.local/bin/synosearch && chmod 700 ~/.local/bin/synosearch' < synosearch
+ssh <ssh-user>@<nas-host> 'mkdir -p ~/.local/bin && cat > ~/.local/bin/unisearch && chmod 700 ~/.local/bin/unisearch' < unisearch
 ```
 
 同じものが置かれたか確認（2つの値が一致すること）:
 
 ```bash
-shasum -a 256 synosearch
+shasum -a 256 unisearch
 ```
 
 ```bash
-ssh <ssh-user>@<nas-host> 'sha256sum ~/.local/bin/synosearch; echo HOME=$HOME'
+ssh <ssh-user>@<nas-host> 'sha256sum ~/.local/bin/unisearch; echo HOME=$HOME'
 ```
 
 ここで表示される `HOME=` の値（例 `/var/services/homes/<ssh-user>`）を手順4で使います。
@@ -31,19 +31,19 @@ ssh <ssh-user>@<nas-host> 'sha256sum ~/.local/bin/synosearch; echo HOME=$HOME'
 ## 2. 検索セッションを始める（毎日1回など）
 
 ```bash
-ssh -t <ssh-user>@<nas-host> '~/.local/bin/synosearch session start --user search-agent --allow-prefix /archive --max-age 8h'
+ssh -t <ssh-user>@<nas-host> '~/.local/bin/unisearch session start --user search-agent --allow-prefix /archive --max-age 8h'
 ```
 
 SSH のパスワード（<ssh-user>）→ DSM パスワード（search-agent）→ 2FA コード（search-agent）の順に入力します。
 DSM の入力の前に「DSM アカウント: search-agent」と表示されます。SSH のアカウントではなく、こちらのパスワードとコードを入れてください。
 
-期間を毎回指定したくないときは、NAS の `~/.config/synosearch/server.conf` に書いておけます（例 `session_max_age = 7d`。最大 90d）。24時間を超える期間で DSM 側のログインがもつかは未確認です。
+期間を毎回指定したくないときは、NAS の `~/.config/unisearch/server.conf` に書いておけます（例 `session_max_age = 7d`。最大 90d）。24時間を超える期間で DSM 側のログインがもつかは未確認です。
 「検索セッションを開始しました」と出たら、SSH を閉じてかまいません。
 
 ## 3. SSH を閉じても残っているか確認（初回は必ず）
 
 ```bash
-ssh <ssh-user>@<nas-host> '~/.local/bin/synosearch session status'
+ssh <ssh-user>@<nas-host> '~/.local/bin/unisearch session status'
 ```
 
 「動作中」と出れば OK。終了コード 8（セッションが無い）なら、DSM が SSH 切断時にプロセスを止めている可能性があります（未検証事項）。結果を記録してください。
@@ -53,13 +53,13 @@ ssh <ssh-user>@<nas-host> '~/.local/bin/synosearch session status'
 エージェントを動かすマシンで鍵を作ります（この鍵ファイルはエージェント以外に渡さない）:
 
 ```bash
-ssh-keygen -t ed25519 -f ~/.ssh/synosearch_agent -N "" -C synosearch-agent
+ssh-keygen -t ed25519 -f ~/.ssh/unisearch_agent -N "" -C unisearch-agent
 ```
 
-NAS の `~/.ssh/authorized_keys` に**1行**追加します。`<HOME>` は手順1の値、`<公開鍵>` は `~/.ssh/synosearch_agent.pub` の中身です:
+NAS の `~/.ssh/authorized_keys` に**1行**追加します。`<HOME>` は手順1の値、`<公開鍵>` は `~/.ssh/unisearch_agent.pub` の中身です:
 
 ```
-restrict,command="<HOME>/.local/bin/synosearch --agent-gateway" <公開鍵>
+restrict,command="<HOME>/.local/bin/unisearch --agent-gateway" <公開鍵>
 ```
 
 - `restrict`: ポート転送・PTY・エージェント転送などを禁止
@@ -69,11 +69,11 @@ restrict,command="<HOME>/.local/bin/synosearch --agent-gateway" <公開鍵>
 ## 5. エージェントからの使い方
 
 ```bash
-ssh -i ~/.ssh/synosearch_agent -o IdentitiesOnly=yes <ssh-user>@<nas-host> 'search "在留資格" --limit 20'
+ssh -i ~/.ssh/unisearch_agent -o IdentitiesOnly=yes <ssh-user>@<nas-host> 'search "在留資格" --limit 20'
 ```
 
 ```bash
-ssh -i ~/.ssh/synosearch_agent -o IdentitiesOnly=yes <ssh-user>@<nas-host> status
+ssh -i ~/.ssh/unisearch_agent -o IdentitiesOnly=yes <ssh-user>@<nas-host> status
 ```
 
 - 成功: stdout に JSON 1行、終了コード 0
@@ -85,10 +85,10 @@ ssh -i ~/.ssh/synosearch_agent -o IdentitiesOnly=yes <ssh-user>@<nas-host> statu
 エージェントが長い ssh コマンドを組み立てずに済むよう、エージェントを動かすマシンに次を置きます。
 
 ```bash
-mkdir -p ~/.local/bin ~/.config/synosearch
+mkdir -p ~/.local/bin ~/.config/unisearch
 cp clients/nas-search ~/.local/bin/nas-search && chmod 755 ~/.local/bin/nas-search
-printf 'host=<ssh-user>@<nas-host>\nkey=~/.ssh/synosearch_agent\n# timeout=260\n' > ~/.config/synosearch/client.conf
-chmod 600 ~/.config/synosearch/client.conf
+printf 'host=<ssh-user>@<nas-host>\nkey=~/.ssh/unisearch_agent\n# timeout=260\n' > ~/.config/unisearch/client.conf
+chmod 600 ~/.config/unisearch/client.conf
 ```
 
 `timeout` の既定は 260 秒です。NAS 側の入口が待つ最長（250 秒）より長いので、NAS の設定を変えても既定のままで足ります。短くする場合は、`session start` が表示する「1回の検索は最長 N 秒」より長くしてください。
@@ -116,9 +116,30 @@ mkdir -p ~/.claude/skills && ln -s "$PWD/skills/nas-search" ~/.claude/skills/nas
 
 ## 止める・取り消す
 
-- 今日の検索をやめる: `ssh <ssh-user>@<nas-host> '~/.local/bin/synosearch session stop'`
+- 今日の検索をやめる: `ssh <ssh-user>@<nas-host> '~/.local/bin/unisearch session stop'`
 - エージェントの鍵を無効にする: `authorized_keys` から該当の1行を消す
-- すべてやめる: 上の2つに加えて `~/.local/bin/synosearch` と `~/.synosearch/` を削除
+- すべてやめる: 上の2つに加えて `~/.local/bin/unisearch` と `~/.unisearch/` を削除
+
+## 古い名前（synosearch）から移るとき
+
+v0.6 までは、コマンド名・設定の置き場所・環境変数が `synosearch` でした。v0.7.0 で `unisearch` に変えました。古い名前で入れている場合は、本人が次のように移します。
+
+NAS で:
+
+1. 動いている検索セッションを止める: `~/.local/bin/synosearch session stop`
+2. 手順1で `~/.local/bin/unisearch` を置く
+3. `authorized_keys` のエージェント用の行で、`command="<HOME>/.local/bin/synosearch --agent-gateway"` を `unisearch` に書き換える
+4. 設定ファイルがあれば移す: `mv ~/.config/synosearch ~/.config/unisearch`
+5. 古いものを消す: `~/.local/bin/synosearch` と `~/.synosearch/`
+6. 手順3で検索セッションを始め直す
+
+エージェントを動かすマシンで:
+
+1. 新しい `clients/nas-search` を置き直す
+2. 設定ファイルを移す: `mv ~/.config/synosearch ~/.config/unisearch`
+3. 環境変数 `SYNOSEARCH_HOST` などを使っていれば、`UNISEARCH_HOST` などに変える
+
+鍵ファイル（`~/.ssh/synosearch_agent`）は、名前が古いままでもそのまま使えます。`client.conf` の `key=` がその場所を指していれば十分です。
 
 ## 記録すること（docs/verification.md へ）
 

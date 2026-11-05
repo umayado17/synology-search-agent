@@ -1,10 +1,10 @@
 # 設計: 外部AIエージェント向けの非対話認証
 
-状態: 案C（セッションブローカー）＋案D（検索専用アカウント）を採用し、v0.4.0 で実装（v0.5.0 で範囲内のページ送り、v0.6.0 で設定ファイルと最大90日を追加、v0.6.1 で入口の待ち時間を修正）。v0.4.0 を 2026-11-05 に実機で確認（`docs/verification.md`）。導入手順は `docs/agent-setup.md`。
+状態: 案C（セッションブローカー）＋案D（検索専用アカウント）を採用し、v0.4.0 で実装（v0.5.0 で範囲内のページ送り、v0.6.0 で設定ファイルと最大90日を追加、v0.6.1 で入口の待ち時間を修正、v0.7.0 でコマンド名を unisearch に変更）。v0.4.0 を 2026-11-05 に実機で確認（`docs/verification.md`）。導入手順は `docs/agent-setup.md`。
 
 ## 1. 課題
 
-ゴールは `ssh <nas-host> synosearch --json QUERY` を外部エージェントが TTY なしで実行し、JSON を得ること。現状は検索のたびに DSM のパスワードと OTP（2FA）が必要で、非対話では成立しない（終了コード7）。
+ゴールは `ssh <nas-host> unisearch --json QUERY` を外部エージェントが TTY なしで実行し、JSON を得ること。現状は検索のたびに DSM のパスワードと OTP（2FA）が必要で、非対話では成立しない（終了コード7）。
 
 守るべき条件（AGENTS.md）: sudo/root 不要、2FA を解除しない、パスワード・OTP・SID をコード/ログ/出力に残さない、認証回避や Cookie 抽出をしない、インデックスや共有フォルダを変更しない。
 
@@ -34,13 +34,13 @@
 ## 4. 推奨: 案C セッションブローカー
 
 ```
-[本人] ssh -t <nas-host> synosearch session start   ← パスワード＋OTPを本人がTTY入力
+[本人] ssh -t <nas-host> unisearch session start   ← パスワード＋OTPを本人がTTY入力
           │ ログイン(FileStation) → SID をプロセスのメモリにのみ保持
           ▼
- synosearch-broker（一般ユーザーの常駐プロセス, root不要）
-   UNIXソケット $XDG_RUNTIME_DIR or ~/.synosearch/broker.sock (0600, ディレクトリ 0700)
+ unisearch-broker（一般ユーザーの常駐プロセス, root不要）
+   UNIXソケット $XDG_RUNTIME_DIR or ~/.unisearch/broker.sock (0600, ディレクトリ 0700)
           ▲
-[エージェント] ssh <nas-host> synosearch --json QUERY   ← TTY不要。ソケット経由で検索依頼
+[エージェント] ssh <nas-host> unisearch --json QUERY   ← TTY不要。ソケット経由で検索依頼
 ```
 
 設計の要点:
@@ -57,20 +57,20 @@
 CLI:
 
 ```
-synosearch session start [--max-age 8h]   # 対話（TTY必須）
-synosearch session status [--json]        # 非対話
-synosearch session stop                   # 非対話、即ログアウト
-synosearch QUERY --json                   # ブローカーがあれば利用、無ければ従来の対話 or exit 8
+unisearch session start [--max-age 8h]   # 対話（TTY必須）
+unisearch session status [--json]        # 非対話
+unisearch session stop                   # 非対話、即ログアウト
+unisearch QUERY --json                   # ブローカーがあれば利用、無ければ従来の対話 or exit 8
 ```
 
 ## 5. SSH 側の権限境界
 
 - エージェント専用の SSH 鍵を新規発行し、`~/.ssh/authorized_keys` で次のように制限する:
-  `restrict,command="$HOME/.local/bin/synosearch --agent-gateway" ssh-ed25519 AAAA... agent`
+  `restrict,command="$HOME/.local/bin/unisearch --agent-gateway" ssh-ed25519 AAAA... agent`
   （`--agent-gateway` は `SSH_ORIGINAL_COMMAND` を解析し、検索/状態確認のみ許可する入口。シェルは渡さない）
 - `restrict` でポート転送・PTY・エージェント転送を禁止 → エージェントはブローカーのソケットに直接触れず、ゲートウェイ経由のみ
 - 鍵の失効＝`authorized_keys` から1行削除。DSM 側の設定変更は不要
-- NAS 上にファイル（`authorized_keys` の1行、`~/.local/bin/synosearch`）を足す作業なので、本人が行う（`docs/agent-setup.md`）
+- NAS 上にファイル（`authorized_keys` の1行、`~/.local/bin/unisearch`）を足す作業なので、本人が行う（`docs/agent-setup.md`）
 
 ## 6. 残るリスクと未確認事項
 

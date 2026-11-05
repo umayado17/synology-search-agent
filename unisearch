@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.6.1"
+VERSION = "0.7.0"
 SCHEMA_VERSION = 1
 
 # NAS自身へのループバック接続専用。外部ホストに書き換えて流用しないこと。
@@ -507,8 +507,8 @@ GATEWAY_MARGIN = 10  # 1回の検索の最長 = 走査の上限秒 + HTTPタイ�
 
 
 def config_path_from(environ):
-    return (environ.get("SYNOSEARCH_CONFIG")
-            or os.path.join(os.path.expanduser("~"), ".config", "synosearch", "server.conf"))
+    return (environ.get("UNISEARCH_CONFIG")
+            or os.path.join(os.path.expanduser("~"), ".config", "unisearch", "server.conf"))
 
 
 def human_seconds(seconds):
@@ -593,7 +593,7 @@ class _Parser(argparse.ArgumentParser):
 
 def build_parser():
     parser = _Parser(
-        prog="synosearch",
+        prog="unisearch",
         description="Synology Universal SearchをSSHから検索（sudo不要・対話認証）")
     parser.add_argument("query", nargs="?", help="検索語")
     parser.add_argument("--limit", type=int, default=10, help="取得件数（1〜100、既定10）")
@@ -728,8 +728,8 @@ KEEPALIVE_QUERY = "keepalive"
 
 
 def state_dir_from(environ):
-    return (environ.get("SYNOSEARCH_STATE_DIR")
-            or os.path.join(os.path.expanduser("~"), ".synosearch"))
+    return (environ.get("UNISEARCH_STATE_DIR")
+            or os.path.join(os.path.expanduser("~"), ".unisearch"))
 
 
 def socket_path_in(state_dir):
@@ -762,7 +762,7 @@ def is_int(value):
 def session_required_error():
     return CliError(
         "session_required",
-        "検索セッションがありません。本人が ssh -t で `synosearch session start` を実行してください",
+        "検索セッションがありません。本人が ssh -t で `unisearch session start` を実行してください",
         EXIT_SESSION_REQUIRED)
 
 
@@ -825,7 +825,7 @@ def create_listener(path):
     if os.path.lexists(path):
         if socket_is_live(path):
             raise CliError("session_running",
-                           "検索セッションはすでに動いています（synosearch session status）",
+                           "検索セッションはすでに動いています（unisearch session status）",
                            EXIT_SESSION_STATE)
         if not stat.S_ISSOCK(os.lstat(path).st_mode):
             raise CliError("state", "ソケットの位置に別のファイルがあります: %s" % path,
@@ -1054,7 +1054,7 @@ def broker_request(socket_path, request, timeout):
 
 
 def build_session_parser():
-    parser = _Parser(prog="synosearch session",
+    parser = _Parser(prog="unisearch session",
                      description="検索セッション（本人が一度ログインし、期限まで検索だけを受け付ける）")
     sub = parser.add_subparsers(dest="action")
     sub.required = True
@@ -1119,7 +1119,7 @@ def session_start(args, transport, prompter, stdout, state_dir, daemonize, setti
     socket_path = socket_path_in(state_dir)
     if os.path.lexists(socket_path) and socket_is_live(socket_path):
         raise CliError("session_running",
-                       "検索セッションはすでに動いています（synosearch session status）",
+                       "検索セッションはすでに動いています（unisearch session status）",
                        EXIT_SESSION_STATE)
 
     transport = transport or HttpTransport(http_timeout)
@@ -1198,7 +1198,7 @@ def session_main(argv, transport, prompter, stdout, stderr, state_dir, daemonize
 
 # ---------------------------------------------------------------- AIエージェント用の入口
 #
-# authorized_keys の command= から `synosearch --agent-gateway` として呼ばれる。
+# authorized_keys の command= から `unisearch --agent-gateway` として呼ばれる。
 # SSH_ORIGINAL_COMMAND を解析し、次の2つだけを受け付ける（シェルは一切起動しない）:
 #   search <検索語> [--limit N] [--offset N]
 #   status

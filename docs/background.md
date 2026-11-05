@@ -40,7 +40,7 @@ Synology の Universal Search（パッケージ名 `SynoFinder`）は、DSM 7 �
 ところが、プログラムから使う公開された入口がありません。
 
 - SSH の普通のコマンドは、この索引を使いません
-- DSM には `/usr/syno/bin/synosearch` というコマンドがありますが、これはヘルプを検索するもので、別物です。このツールの名前も `synosearch` なので、まぎらわしい点に注意してください（[README の注意](../README.md#使う前の準備nas-側)）
+- DSM には `/usr/syno/bin/synosearch` というコマンドがありますが、これはヘルプを検索するもので、別物です。このツールも最初は `synosearch` という名前でしたが、まぎらわしく、`syno` で始まる名前は DSM の更新で重なるおそれもあるので、`unisearch` に変えました
 
 もう1つ、落とし穴があります。**索引を作る共有フォルダを指定しないと、索引は作られません。** Synology の公式ヘルプにも、索引を作っていないフォルダのファイルは検索結果に出ないこと、File Station や SMB で使うフォルダは自分で索引の作成（Indexing Task）を作る必要があることが書かれています（[File Indexing](https://kb.synology.com/en-global/DSM/help/SynoFinder/universalsearch_index?version=7)）。作者の NAS でも、パッケージは動いていたのに、索引の対象フォルダが0件で、索引のデータは約2.8MB しかありませんでした。「入っているのに検索できない」原因はこれでした。
 

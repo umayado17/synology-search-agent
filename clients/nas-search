@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""nas-search: AIエージェント側から NAS の synosearch 入口を呼ぶ小さなコマンド。
+"""nas-search: AIエージェント側から NAS の unisearch 入口を呼ぶ小さなコマンド。
 
     nas-search "検索語" [--limit N] [--offset N] [--max-results N]
     nas-search --status
 
-NAS 側は authorized_keys の `restrict,command="... synosearch --agent-gateway"` で
+NAS 側は authorized_keys の `restrict,command="... unisearch --agent-gateway"` で
 検索専用に制限された鍵を前提とする（docs/agent-setup.md）。
 パスワード認証は一切試さない（失敗回数で NAS に締め出されないように）。
 出力・終了コードは NAS 側の入口と同じ（docs/cli-spec.md）。標準ライブラリのみ。
@@ -16,7 +16,7 @@ import shlex
 import subprocess
 import sys
 
-VERSION = "0.3.1"
+VERSION = "0.4.0"
 SCHEMA_VERSION = 1
 
 EXIT_OK = 0
@@ -28,7 +28,7 @@ SSH_FAILURE = 255
 MAX_RESULTS_CAP = 1000
 PAGE_SIZE = 100
 MAX_PAGES = 20
-DEFAULT_CONFIG = os.path.join(os.path.expanduser("~"), ".config", "synosearch", "client.conf")
+DEFAULT_CONFIG = os.path.join(os.path.expanduser("~"), ".config", "unisearch", "client.conf")
 
 SSH_OPTIONS = [
     "-o", "IdentitiesOnly=yes",
@@ -98,14 +98,14 @@ def seconds_setting(value, name, low, high):
 
 def resolve_config(args, environ):
     """優先順: 引数 > 環境変数 > 設定ファイル。"""
-    path = environ.get("SYNOSEARCH_CLIENT_CONFIG") or DEFAULT_CONFIG
+    path = environ.get("UNISEARCH_CLIENT_CONFIG") or DEFAULT_CONFIG
     file_values = read_config_file(path)
-    host = args.host or environ.get("SYNOSEARCH_HOST") or file_values.get("host")
-    key = args.key or environ.get("SYNOSEARCH_KEY") or file_values.get("key")
+    host = args.host or environ.get("UNISEARCH_HOST") or file_values.get("host")
+    key = args.key or environ.get("UNISEARCH_KEY") or file_values.get("key")
     if not host or not key:
         raise ClientError(
             "config",
-            "接続先と鍵が未設定です。SYNOSEARCH_HOST（例 user@nas）と SYNOSEARCH_KEY（鍵ファイル）"
+            "接続先と鍵が未設定です。UNISEARCH_HOST（例 user@nas）と UNISEARCH_KEY（鍵ファイル）"
             "を環境変数か %s に設定してください" % path, EXIT_USAGE)
     if host.startswith("-"):
         raise ClientError("config", "接続先の形式が不正です", EXIT_USAGE)
@@ -218,8 +218,8 @@ def build_parser():
     parser.add_argument("--max-results", type=int,
                         help="ページを自動で送り、最大この件数まで集める（1〜%d）" % MAX_RESULTS_CAP)
     parser.add_argument("--status", action="store_true", help="検索セッションの状態を表示")
-    parser.add_argument("--host", help="接続先 user@host（既定は SYNOSEARCH_HOST）")
-    parser.add_argument("--key", help="鍵ファイル（既定は SYNOSEARCH_KEY）")
+    parser.add_argument("--host", help="接続先 user@host（既定は UNISEARCH_HOST）")
+    parser.add_argument("--key", help="鍵ファイル（既定は UNISEARCH_KEY）")
     parser.add_argument("--timeout", type=int,
                         help="1回の呼び出しの上限秒（既定は設定ファイルの timeout、無ければ%d）"
                         % DEFAULT_TIMEOUT)
@@ -252,7 +252,7 @@ def main(argv=None, environ=None, runner=None, stdout=None, stderr=None):
     stderr = stderr or sys.stderr
     environ = os.environ if environ is None else environ
     runner = runner or subprocess.run
-    ssh_bin = environ.get("SYNOSEARCH_SSH_BIN", "ssh")
+    ssh_bin = environ.get("UNISEARCH_SSH_BIN", "ssh")
     try:
         args = build_parser().parse_args(argv)
         validate(args)

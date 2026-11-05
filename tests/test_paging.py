@@ -5,7 +5,7 @@ offset / next_offset は「許可範囲内で何件目か」で数える。範�
 """
 import unittest
 
-from test_synosearch import cli
+from test_unisearch import cli
 
 ALLOWED = ["/archive"]
 

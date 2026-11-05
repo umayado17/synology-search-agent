@@ -66,11 +66,11 @@ nas-search --status                          # 検索セッションの状態（
 
 ## 設定（人間が一度だけ）
 
-接続先と鍵は環境変数か `~/.config/synosearch/client.conf` に置きます（詳細はリポジトリの `docs/agent-setup.md`）。
+接続先と鍵は環境変数か `~/.config/unisearch/client.conf` に置きます（詳細はリポジトリの `docs/agent-setup.md`）。
 
 ```
 host=<ssh-user>@<nas-host>
-key=~/.ssh/synosearch_agent
+key=~/.ssh/unisearch_agent
 ```
 
 未設定だと終了コード 2（`type: config`）になります。待ち時間は `timeout=`（秒、既定 260）で変えられます。

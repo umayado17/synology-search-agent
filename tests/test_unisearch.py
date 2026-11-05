@@ -1,4 +1,4 @@
-"""synosearch の単体・回帰テスト（標準ライブラリ unittest のみ、NAS不要）。
+"""unisearch の単体・回帰テスト（標準ライブラリ unittest のみ、NAS不要）。
 
 実行: python3 -m unittest discover -s tests -v
 """
@@ -10,13 +10,13 @@ import os
 import unittest
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-SCRIPT = os.path.join(ROOT, "synosearch")
+SCRIPT = os.path.join(ROOT, "unisearch")
 FIXTURES = os.path.join(ROOT, "tests", "fixtures")
 
 
 def load_cli():
-    loader = importlib.machinery.SourceFileLoader("synosearch_cli", SCRIPT)
-    spec = importlib.util.spec_from_loader("synosearch_cli", loader)
+    loader = importlib.machinery.SourceFileLoader("unisearch_cli", SCRIPT)
+    spec = importlib.util.spec_from_loader("unisearch_cli", loader)
     module = importlib.util.module_from_spec(spec)
     loader.exec_module(module)
     return module
@@ -82,8 +82,8 @@ class FakePrompter:
 
 
 LOGIN_OK = {"success": True, "data": {"sid": SID}}
-NO_SESSION_ENV = {"SYNOSEARCH_STATE_DIR": "/nonexistent/synosearch-test-state",
-                  "SYNOSEARCH_CONFIG": "/nonexistent/synosearch-test-config"}
+NO_SESSION_ENV = {"UNISEARCH_STATE_DIR": "/nonexistent/unisearch-test-state",
+                  "UNISEARCH_CONFIG": "/nonexistent/unisearch-test-config"}
 LOGOUT_OK = {"success": True}
 
 

@@ -9,7 +9,7 @@ import subprocess
 import tempfile
 import unittest
 
-from test_synosearch import ROOT, cli
+from test_unisearch import ROOT, cli
 
 CLIENT = os.path.join(ROOT, "clients", "nas-search")
 
@@ -63,8 +63,8 @@ class ClientTestBase(unittest.TestCase):
         self.key = os.path.join(self.tmp, "agent_key")
         with open(self.key, "w") as handle:
             handle.write("dummy")
-        self.env = {"SYNOSEARCH_HOST": "agent@nas.example", "SYNOSEARCH_KEY": self.key,
-                    "SYNOSEARCH_CLIENT_CONFIG": os.path.join(self.tmp, "missing.conf")}
+        self.env = {"UNISEARCH_HOST": "agent@nas.example", "UNISEARCH_KEY": self.key,
+                    "UNISEARCH_CLIENT_CONFIG": os.path.join(self.tmp, "missing.conf")}
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -148,7 +148,7 @@ class ClientBehaviourTest(ClientTestBase):
 
 class ConfigTest(ClientTestBase):
     def test_missing_config_is_usage_error(self):
-        env = {"SYNOSEARCH_CLIENT_CONFIG": os.path.join(self.tmp, "none.conf")}
+        env = {"UNISEARCH_CLIENT_CONFIG": os.path.join(self.tmp, "none.conf")}
         code, _, err, runner = self.run_client(["q"], [], environ=env)
         self.assertEqual(code, client.EXIT_USAGE)
         self.assertEqual(json.loads(err)["error"]["type"], "config")
@@ -158,10 +158,10 @@ class ConfigTest(ClientTestBase):
         conf = os.path.join(self.tmp, "client.conf")
         with open(conf, "w", encoding="utf-8") as handle:
             handle.write("# comment\nhost = file@nas\nkey = %s\n" % self.key)
-        env = {"SYNOSEARCH_CLIENT_CONFIG": conf}
+        env = {"UNISEARCH_CLIENT_CONFIG": conf}
         _, _, _, runner = self.run_client(["q"], [(0, page([]), "")], environ=env)
         self.assertEqual(runner.calls[0][-2], "file@nas")
-        env["SYNOSEARCH_HOST"] = "env@nas"
+        env["UNISEARCH_HOST"] = "env@nas"
         _, _, _, runner = self.run_client(["q"], [(0, page([]), "")], environ=env)
         self.assertEqual(runner.calls[0][-2], "env@nas")
         _, _, _, runner = self.run_client(["q", "--host", "arg@nas"], [(0, page([]), "")],
@@ -169,10 +169,10 @@ class ConfigTest(ClientTestBase):
         self.assertEqual(runner.calls[0][-2], "arg@nas")
 
     def test_bad_host_or_key(self):
-        env = dict(self.env, SYNOSEARCH_HOST="-oProxyCommand=evil")
+        env = dict(self.env, UNISEARCH_HOST="-oProxyCommand=evil")
         code, _, _, runner = self.run_client(["q"], [], environ=env)
         self.assertEqual(code, client.EXIT_USAGE)
-        env = dict(self.env, SYNOSEARCH_KEY=os.path.join(self.tmp, "nokey"))
+        env = dict(self.env, UNISEARCH_KEY=os.path.join(self.tmp, "nokey"))
         code, _, _, runner = self.run_client(["q"], [], environ=env)
         self.assertEqual(code, client.EXIT_USAGE)
         self.assertEqual(runner.calls, [])
@@ -183,7 +183,7 @@ class TimeoutSettingsTest(ClientTestBase):
         conf = os.path.join(self.tmp, "client.conf")
         with open(conf, "w", encoding="utf-8") as handle:
             handle.write("host = file@nas\nkey = %s\n%s" % (self.key, text))
-        return {"SYNOSEARCH_CLIENT_CONFIG": conf}
+        return {"UNISEARCH_CLIENT_CONFIG": conf}
 
     def run_with_timeout_spy(self, argv, environ):
         seen = {}

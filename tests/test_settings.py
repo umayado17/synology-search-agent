@@ -6,7 +6,7 @@ import tempfile
 import unittest
 import unittest.mock
 
-from test_synosearch import (FakePrompter, FakeTransport, LOGIN_OK, LOGOUT_OK, SECRETS, cli,
+from test_unisearch import (FakePrompter, FakeTransport, LOGIN_OK, LOGOUT_OK, SECRETS, cli,
                              read_terminal_until)
 
 ALLOWED = "/archive"
@@ -66,24 +66,24 @@ class SettingsFileTest(unittest.TestCase):
                 self.assertNotIn("123456", ctx.exception.message)
 
     def test_config_path_from_environment(self):
-        self.assertEqual(cli.config_path_from({"SYNOSEARCH_CONFIG": self.path}), self.path)
+        self.assertEqual(cli.config_path_from({"UNISEARCH_CONFIG": self.path}), self.path)
         self.assertTrue(cli.config_path_from({}).endswith(
-            os.path.join(".config", "synosearch", "server.conf")))
+            os.path.join(".config", "unisearch", "server.conf")))
 
     def test_bad_config_is_json_error_for_interactive_search(self):
         self.write("password = hunter2\n")
         out, err = io.StringIO(), io.StringIO()
         code = cli.main(["test", "--json"], prompter=FakePrompter(), stdout=out, stderr=err,
-                        environ={"SYNOSEARCH_STATE_DIR": os.path.join(self.tmp, "state"),
-                                 "SYNOSEARCH_CONFIG": self.path})
+                        environ={"UNISEARCH_STATE_DIR": os.path.join(self.tmp, "state"),
+                                 "UNISEARCH_CONFIG": self.path})
         self.assertEqual(code, cli.EXIT_USAGE)
         self.assertIn('"config"', err.getvalue())
         self.assertNotIn("hunter2", err.getvalue())
 
     def test_interactive_timeout_comes_from_file_unless_given(self):
         self.write("http_timeout = 30\n")
-        env = {"SYNOSEARCH_STATE_DIR": os.path.join(self.tmp, "state"),
-               "SYNOSEARCH_CONFIG": self.path}
+        env = {"UNISEARCH_STATE_DIR": os.path.join(self.tmp, "state"),
+               "UNISEARCH_CONFIG": self.path}
         seen = []
         real = cli.HttpTransport
 
@@ -122,8 +122,8 @@ class GatewayWaitTest(unittest.TestCase):
         for config in (conf, os.path.join(tmp, "missing.conf")):
             with unittest.mock.patch.object(cli, "broker_request", fake_request):
                 code = cli.main(["--agent-gateway"], stdout=io.StringIO(), stderr=io.StringIO(),
-                                environ={"SYNOSEARCH_STATE_DIR": os.path.join(tmp, "state"),
-                                         "SYNOSEARCH_CONFIG": config,
+                                environ={"UNISEARCH_STATE_DIR": os.path.join(tmp, "state"),
+                                         "UNISEARCH_CONFIG": config,
                                          "SSH_ORIGINAL_COMMAND": "search test"})
             self.assertEqual(code, cli.EXIT_OK)
         self.assertEqual(waits, [cli.gateway_wait()] * 2)
@@ -135,8 +135,8 @@ class SessionStartSettingsTest(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.mkdtemp(prefix="sss-", dir="/tmp" if os.path.isdir("/tmp") else None)
         self.conf = os.path.join(self.tmp, "server.conf")
-        self.env = {"SYNOSEARCH_STATE_DIR": os.path.join(self.tmp, "st"),
-                    "SYNOSEARCH_CONFIG": self.conf}
+        self.env = {"UNISEARCH_STATE_DIR": os.path.join(self.tmp, "st"),
+                    "UNISEARCH_CONFIG": self.conf}
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -208,8 +208,8 @@ class InteractivePromptTest(unittest.TestCase):
                         transport=FakeTransport({"login": LOGIN_OK, "search": response,
                                                  "logout": LOGOUT_OK}),
                         stdout=io.StringIO(), stderr=io.StringIO(),
-                        environ={"SYNOSEARCH_STATE_DIR": "/nonexistent/s",
-                                 "SYNOSEARCH_CONFIG": "/nonexistent/c"})
+                        environ={"UNISEARCH_STATE_DIR": "/nonexistent/s",
+                                 "UNISEARCH_CONFIG": "/nonexistent/c"})
         self.assertEqual(code, 0)
         self.assertTrue(all(label.startswith("alice の") for label in prompter.labels))
         self.assertIn("DSM アカウント: alice", prompter.notices[0])
