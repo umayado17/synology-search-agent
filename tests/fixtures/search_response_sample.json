@@ -1,0 +1,13 @@
+{
+  "_note": "2026-11-04 実機（DSM 7.4.1）の --raw 出力と同じ形式。パスとdoc_idは伏せ字の架空値。値が文字列で返る点・SYNOMDPath等が追加で返る点が実機どおり。",
+  "success": true,
+  "data": {
+    "has_error": false,
+    "hits": [
+      {"SYNOMDContentModificationDate": "1244279630", "SYNOMDExtension": "", "SYNOMDFSName": "Test", "SYNOMDFSSize": "4096", "SYNOMDIsDir": "y", "SYNOMDOwnerUserID": null, "SYNOMDPath": "/volume1/share/example/Test", "SYNOMDSharePath": "/share/example/Test", "additional": {"doc_id": 1, "is_mount_point": false, "keyword": ""}, "readable": true},
+      {"SYNOMDContentModificationDate": "1396685721", "SYNOMDExtension": "txt", "SYNOMDFSName": "NL4Test.txt", "SYNOMDFSSize": "1234", "SYNOMDIsDir": "n", "SYNOMDOwnerUserID": null, "SYNOMDPath": "/volume1/share/example/NL4Test.txt", "SYNOMDSharePath": "/share/example/NL4Test.txt", "additional": {"doc_id": 2, "is_mount_point": false, "keyword": ""}, "readable": true}
+    ],
+    "total": 3666,
+    "unavail": []
+  }
+}

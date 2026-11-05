@@ -1,0 +1,243 @@
+#!/usr/bin/env python3
+"""nas-search: AIエージェント側から NAS の synosearch 入口を呼ぶ小さなコマンド。
+
+    nas-search "検索語" [--limit N] [--offset N] [--max-results N]
+    nas-search --status
+
+NAS 側は authorized_keys の `restrict,command="... synosearch --agent-gateway"` で
+検索専用に制限された鍵を前提とする（docs/agent-setup.md）。
+パスワード認証は一切試さない（失敗回数で NAS に締め出されないように）。
+出力・終了コードは NAS 側の入口と同じ（docs/cli-spec.md）。標準ライブラリのみ。
+"""
+import argparse
+import json
+import os
+import shlex
+import subprocess
+import sys
+
+VERSION = "0.1.0"
+SCHEMA_VERSION = 1
+
+EXIT_OK = 0
+EXIT_USAGE = 2
+EXIT_NETWORK = 5
+EXIT_RESPONSE = 6
+SSH_FAILURE = 255
+
+MAX_RESULTS_CAP = 1000
+PAGE_SIZE = 100
+MAX_PAGES = 20
+DEFAULT_CONFIG = os.path.join(os.path.expanduser("~"), ".config", "synosearch", "client.conf")
+
+SSH_OPTIONS = [
+    "-o", "IdentitiesOnly=yes",
+    "-o", "BatchMode=yes",
+    "-o", "PasswordAuthentication=no",
+    "-o", "KbdInteractiveAuthentication=no",
+    "-o", "LogLevel=ERROR",
+    "-o", "ConnectTimeout=15",
+    "-T",
+]
+
+
+class ClientError(Exception):
+    def __init__(self, kind, message, exit_code):
+        super().__init__(message)
+        self.kind = kind
+        self.message = message
+        self.exit_code = exit_code
+
+
+def emit_error(error, stderr):
+    print(json.dumps({"schema_version": SCHEMA_VERSION, "error": {
+        "type": error.kind, "message": error.message, "api_code": None,
+        "exit_code": error.exit_code}}, ensure_ascii=False), file=stderr)
+
+
+# ---------------------------------------------------------------- 設定
+
+def read_config_file(path):
+    """KEY=VALUE 形式（host=, key=）。# で始まる行は無視。無ければ空。"""
+    values = {}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                name, value = line.split("=", 1)
+                values[name.strip().lower()] = value.strip()
+    except FileNotFoundError:
+        pass
+    return values
+
+
+def resolve_config(args, environ):
+    """優先順: 引数 > 環境変数 > 設定ファイル。"""
+    path = environ.get("SYNOSEARCH_CLIENT_CONFIG") or DEFAULT_CONFIG
+    file_values = read_config_file(path)
+    host = args.host or environ.get("SYNOSEARCH_HOST") or file_values.get("host")
+    key = args.key or environ.get("SYNOSEARCH_KEY") or file_values.get("key")
+    if not host or not key:
+        raise ClientError(
+            "config",
+            "接続先と鍵が未設定です。SYNOSEARCH_HOST（例 user@nas）と SYNOSEARCH_KEY（鍵ファイル）"
+            "を環境変数か %s に設定してください" % path, EXIT_USAGE)
+    if host.startswith("-"):
+        raise ClientError("config", "接続先の形式が不正です", EXIT_USAGE)
+    key = os.path.expanduser(key)
+    if not os.path.isfile(key):
+        raise ClientError("config", "鍵ファイルがありません: %s" % key, EXIT_USAGE)
+    return host, key
+
+
+# ---------------------------------------------------------------- 遠隔呼び出し
+
+def search_command(query, limit, offset):
+    """NAS 側入口が shlex で解釈する文字列。検索語は必ず `--` の後に引用して置く。"""
+    return "search --limit %d --offset %d -- %s" % (limit, offset, shlex.quote(query))
+
+
+def ssh_argv(ssh_bin, host, key, remote_command):
+    return [ssh_bin, "-i", key] + SSH_OPTIONS + [host, remote_command]
+
+
+def call_remote(runner, ssh_bin, host, key, remote_command, timeout):
+    """(終了コード, stdout, stderr) を返す。ssh 自体の失敗は ClientError。"""
+    try:
+        completed = runner(ssh_argv(ssh_bin, host, key, remote_command),
+                           stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                           stdin=subprocess.DEVNULL, timeout=timeout)
+    except FileNotFoundError:
+        raise ClientError("ssh", "ssh コマンドが見つかりません", EXIT_NETWORK)
+    except subprocess.TimeoutExpired:
+        raise ClientError("ssh", "NAS からの応答が %d 秒ありません" % timeout, EXIT_NETWORK)
+    stdout = completed.stdout.decode("utf-8", "replace")
+    stderr = completed.stderr.decode("utf-8", "replace")
+    if completed.returncode == SSH_FAILURE:
+        detail = " ".join(line for line in stderr.splitlines()
+                          if line and not line.startswith("**"))[:300]
+        raise ClientError("ssh", "SSH 接続に失敗しました: %s" % (detail or "詳細不明"),
+                          EXIT_NETWORK)
+    return completed.returncode, stdout, stderr
+
+
+def parse_result(stdout):
+    try:
+        result = json.loads(stdout)
+    except ValueError:
+        raise ClientError("response", "NAS の応答が JSON ではありません", EXIT_RESPONSE)
+    if not isinstance(result, dict) or not isinstance(result.get("hits"), list):
+        raise ClientError("response", "NAS の応答形式が想定外です", EXIT_RESPONSE)
+    return result
+
+
+def collect(runner, ssh_bin, host, key, query, offset, max_results, timeout):
+    """ページを順に取り、最大 max_results 件まで集める（範囲外は NAS 側で除外済み）。"""
+    hits = []
+    has_error = False
+    next_offset = offset
+    pages = 0
+    while next_offset is not None and len(hits) < max_results and pages < MAX_PAGES:
+        code, stdout, stderr = call_remote(
+            runner, ssh_bin, host, key, search_command(query, PAGE_SIZE, next_offset), timeout)
+        if code != EXIT_OK:
+            return code, None, stderr
+        page = parse_result(stdout)
+        hits.extend(page["hits"])
+        has_error = has_error or bool(page.get("has_error"))
+        next_offset = page.get("next_offset")
+        pages += 1
+    if len(hits) > max_results:
+        hits = hits[:max_results]  # 切り捨てた分は next_offset で取り直せないので注意書きを付ける
+    return EXIT_OK, {
+        "schema_version": SCHEMA_VERSION,
+        "query": query,
+        "offset": offset,
+        "limit": max_results,
+        "total": None,
+        "returned": len(hits),
+        "next_offset": next_offset,
+        "has_error": has_error,
+        "unavailable": [],
+        "hits": hits,
+        "pages_fetched": pages,
+    }, ""
+
+
+# ---------------------------------------------------------------- CLI
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        raise ClientError("usage", message, EXIT_USAGE)
+
+
+def build_parser():
+    parser = _Parser(prog="nas-search", allow_abbrev=False,
+                     description="NAS の Universal Search を検索（結果は JSON）")
+    parser.add_argument("query", nargs="?", help="検索語（ファイル名・本文が対象）")
+    parser.add_argument("--limit", type=int, default=20, help="1回で取る件数 1〜100（既定20）")
+    parser.add_argument("--offset", type=int, default=0, help="開始位置（前回の next_offset）")
+    parser.add_argument("--max-results", type=int,
+                        help="ページを自動で送り、最大この件数まで集める（1〜%d）" % MAX_RESULTS_CAP)
+    parser.add_argument("--status", action="store_true", help="検索セッションの状態を表示")
+    parser.add_argument("--host", help="接続先 user@host（既定は SYNOSEARCH_HOST）")
+    parser.add_argument("--key", help="鍵ファイル（既定は SYNOSEARCH_KEY）")
+    parser.add_argument("--timeout", type=int, default=90, help="1回の呼び出しの上限秒（既定90）")
+    parser.add_argument("--version", action="version", version="%(prog)s " + VERSION)
+    return parser
+
+
+def validate(args):
+    if args.status:
+        if args.query is not None:
+            raise ClientError("usage", "--status と検索語は同時に指定できません", EXIT_USAGE)
+        return
+    if args.query is None or not args.query.strip():
+        raise ClientError("usage", "検索語を指定してください", EXIT_USAGE)
+    if len(args.query) > 1000:
+        raise ClientError("usage", "検索語が長すぎます（1000文字まで）", EXIT_USAGE)
+    if not 1 <= args.limit <= 100:
+        raise ClientError("usage", "--limit は1〜100", EXIT_USAGE)
+    if not 0 <= args.offset <= 100000:
+        raise ClientError("usage", "--offset は0〜100000", EXIT_USAGE)
+    if args.max_results is not None and not 1 <= args.max_results <= MAX_RESULTS_CAP:
+        raise ClientError("usage", "--max-results は1〜%d" % MAX_RESULTS_CAP, EXIT_USAGE)
+    if not 5 <= args.timeout <= 600:
+        raise ClientError("usage", "--timeout は5〜600", EXIT_USAGE)
+
+
+def main(argv=None, environ=None, runner=None, stdout=None, stderr=None):
+    stdout = stdout or sys.stdout
+    stderr = stderr or sys.stderr
+    environ = os.environ if environ is None else environ
+    runner = runner or subprocess.run
+    ssh_bin = environ.get("SYNOSEARCH_SSH_BIN", "ssh")
+    try:
+        args = build_parser().parse_args(argv)
+        validate(args)
+        host, key = resolve_config(args, environ)
+        if args.max_results is not None:
+            code, result, err = collect(runner, ssh_bin, host, key, args.query, args.offset,
+                                        args.max_results, args.timeout)
+            if code != EXIT_OK:
+                stderr.write(err)
+                return code
+            print(json.dumps(result, ensure_ascii=False), file=stdout)
+            return EXIT_OK
+        remote = "status" if args.status else search_command(args.query, args.limit, args.offset)
+        code, out, err = call_remote(runner, ssh_bin, host, key, remote, args.timeout)
+        stdout.write(out)
+        stderr.write(err)
+        return code
+    except ClientError as exc:
+        emit_error(exc, stderr)
+        return exc.exit_code
+    except KeyboardInterrupt:
+        emit_error(ClientError("interrupted", "中断されました", 130), stderr)
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -1,0 +1,1084 @@
+#!/usr/bin/env python3
+"""Synology Universal Search CLI（sudo不要）。対話検索と、本人が開始する検索セッション。
+
+DSM 7.4 / DS225+ 実機で成功したAPI条件（docs/verification.md）を使う。
+仕様は docs/cli-spec.md。Python 3.8 以上・標準ライブラリのみ。
+"""
+import argparse
+import datetime
+import getpass
+import json
+import os
+import posixpath
+import shlex
+import signal
+import socket
+import ssl
+import stat
+import struct
+import sys
+import time
+import urllib.error
+import urllib.parse
+import urllib.request
+
+VERSION = "0.4.0"
+SCHEMA_VERSION = 1
+
+# NAS自身へのループバック接続専用。外部ホストに書き換えて流用しないこと。
+API_URL = "https://127.0.0.1:5001/webapi/entry.cgi"
+INFO_URL = "https://127.0.0.1:5001/webapi/query.cgi"
+
+AUTH_API = "SYNO.API.Auth"
+AUTH_VERSION = "6"
+SESSION_NAME = "FileStation"
+SEARCH_API = "SYNO.Finder.FileIndexing.Search"
+SEARCH_VERSION = "1"
+
+SEARCH_WEIGHT_LIST = [
+    {"field": "SYNOMDWildcard", "weight": 1},
+    {"field": "SYNOMDTextContent", "weight": 1},
+    {"field": "SYNOMDSearchFileName", "weight": 8.5, "trailing_wildcard": True},
+]
+SEARCH_FIELDS = [
+    "SYNOMDSharePath", "SYNOMDFSName", "SYNOMDFSSize",
+    "SYNOMDIsDir", "SYNOMDContentModificationDate",
+]
+def to_int(value):
+    """実機では数値が文字列で返る（例 "4096"）。整数に変換できなければ None。"""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str) and value.strip().lstrip("-").isdigit():
+        return int(value.strip())
+    return None
+
+
+def to_bool(value):
+    """実機の SYNOMDIsDir は "y"/"n"。それ以外の値は None。"""
+    if isinstance(value, bool):
+        return value
+    if value in ("y", "Y", "yes", "true", "1", 1):
+        return True
+    if value in ("n", "N", "no", "false", "0", 0):
+        return False
+    return None
+
+
+def to_text(value):
+    return value if isinstance(value, str) else None
+
+
+def to_utc_iso(value):
+    seconds = to_int(value)
+    if seconds is None:
+        return None
+    try:
+        return datetime.datetime.fromtimestamp(
+            seconds, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    except (OverflowError, OSError, ValueError):
+        return None
+
+
+# 出力JSONのキー名 ← APIのフィールド名・変換（2026-11-04 実機の応答形式に合わせた）
+HIT_KEY_MAP = [
+    ("name", "SYNOMDFSName", to_text),
+    ("share_path", "SYNOMDSharePath", to_text),   # /<共有フォルダ>/.../<名前>
+    ("path", "SYNOMDPath", to_text),              # /volume1/<共有フォルダ>/...（NAS内の絶対パス）
+    ("extension", "SYNOMDExtension", to_text),
+    ("size", "SYNOMDFSSize", to_int),             # バイト（実機は文字列）
+    ("is_dir", "SYNOMDIsDir", to_bool),
+    ("modified", "SYNOMDContentModificationDate", to_int),  # UNIX秒（実機は文字列）
+    ("modified_utc", "SYNOMDContentModificationDate", to_utc_iso),
+    ("readable", "readable", to_bool),
+]
+
+# 終了コード（docs/cli-spec.md と一致させること）
+EXIT_OK = 0
+EXIT_INTERNAL = 1
+EXIT_USAGE = 2
+EXIT_AUTH = 3
+EXIT_API = 4
+EXIT_NETWORK = 5
+EXIT_RESPONSE = 6
+EXIT_NO_TTY = 7
+EXIT_SESSION_REQUIRED = 8
+EXIT_SESSION_STATE = 9
+EXIT_INTERRUPTED = 130
+
+# SYNO.API.Auth の公開資料にある代表的なコード。参考表示のみで断定はしない。
+AUTH_ERROR_HINTS = {
+    400: "アカウントまたはパスワードが正しくない可能性",
+    401: "アカウントが無効化されている可能性",
+    402: "権限が拒否された可能性",
+    403: "2段階認証コードが必要",
+    404: "2段階認証コードの検証に失敗した可能性",
+    406: "2段階認証の設定が必須とされている可能性",
+    407: "IPがブロックされている可能性",
+}
+
+
+class CliError(Exception):
+    """終了コードと分類つきのエラー。message に秘密情報を含めないこと。"""
+
+    def __init__(self, kind, message, exit_code, api_code=None):
+        super().__init__(message)
+        self.kind = kind
+        self.message = message
+        self.exit_code = exit_code
+        self.api_code = api_code
+
+
+# ---------------------------------------------------------------- 通信層
+
+def loopback_ssl_context():
+    # 127.0.0.1 上のDSM自己署名証明書を検証できないため、ループバック限定で検証を省略。
+    return ssl._create_unverified_context()
+
+
+class HttpTransport:
+    """POST して JSON を返す。テストでは同じ call(url, params) を持つ偽物に差し替える。"""
+
+    def __init__(self, timeout):
+        self.timeout = timeout
+        self.context = loopback_ssl_context()
+
+    def call(self, url, params):
+        body = urllib.parse.urlencode(params).encode("utf-8")
+        request = urllib.request.Request(url, data=body, method="POST")
+        try:
+            with urllib.request.urlopen(request, context=self.context,
+                                        timeout=self.timeout) as response:
+                raw = response.read()
+        except urllib.error.HTTPError as exc:
+            raise CliError("network", "HTTPエラー %s" % exc.code, EXIT_NETWORK)
+        except (urllib.error.URLError, OSError) as exc:
+            reason = getattr(exc, "reason", exc)
+            raise CliError("network", "接続できません: %s" % reason, EXIT_NETWORK)
+        try:
+            return json.loads(raw.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            raise CliError("response", "APIの応答がJSONではありません", EXIT_RESPONSE)
+
+
+def api_code_of(response):
+    error = response.get("error") if isinstance(response, dict) else None
+    if isinstance(error, dict):
+        return error.get("code")
+    return None
+
+
+def require_dict(response, what):
+    if not isinstance(response, dict) or "success" not in response:
+        raise CliError("response", "%sの応答形式が想定外です" % what, EXIT_RESPONSE)
+    return response
+
+
+# ---------------------------------------------------------------- API操作
+
+def login(transport, username, password, otp):
+    response = require_dict(transport.call(API_URL, {
+        "api": AUTH_API, "version": AUTH_VERSION, "method": "login",
+        "account": username, "passwd": password, "otp_code": otp,
+        "session": SESSION_NAME, "format": "sid",
+    }), "認証")
+    if not response.get("success"):
+        code = api_code_of(response)
+        hint = AUTH_ERROR_HINTS.get(code)
+        message = "認証失敗（コード %s）" % code
+        if hint:
+            message += "：%s" % hint
+        raise CliError("auth", message, EXIT_AUTH, code)
+    data = response.get("data")
+    sid = data.get("sid") if isinstance(data, dict) else None
+    if not isinstance(sid, str) or not sid:
+        raise CliError("response", "認証応答にセッションIDがありません", EXIT_RESPONSE)
+    return sid
+
+
+def logout(transport, sid):
+    """成功なら True。失敗しても例外は投げない（検索結果を優先する）。"""
+    try:
+        response = transport.call(API_URL, {
+            "api": AUTH_API, "version": AUTH_VERSION, "method": "logout",
+            "session": SESSION_NAME, "_sid": sid,
+        })
+    except Exception:
+        return False
+    return isinstance(response, dict) and bool(response.get("success"))
+
+
+def build_search_params(query, limit, offset, sid):
+    return {
+        "api": SEARCH_API, "version": SEARCH_VERSION, "method": "search",
+        "keyword": json.dumps(query, ensure_ascii=False),
+        "size": str(limit),
+        "from": str(offset),
+        "search_weight_list": json.dumps(SEARCH_WEIGHT_LIST),
+        "fields": json.dumps(SEARCH_FIELDS),
+        "sorter_field": json.dumps("relevance"),
+        "sorter_direction": json.dumps("asc"),
+        "sorter_use_nature_sort": "false",
+        "sorter_show_directory_first": "true",
+        "_sid": sid,
+    }
+
+
+def search(transport, sid, query, limit, offset):
+    response = require_dict(
+        transport.call(API_URL, build_search_params(query, limit, offset, sid)), "検索")
+    if not response.get("success"):
+        code = api_code_of(response)
+        # 119/120 等の意味は前提に依存するため解釈を付けない（AGENTS.md）。
+        raise CliError("api", "検索失敗（コード %s）" % code, EXIT_API, code)
+    data = response.get("data")
+    if not isinstance(data, dict):
+        raise CliError("response", "検索応答に data がありません", EXIT_RESPONSE)
+    hits = data.get("hits", [])
+    if not isinstance(hits, list):
+        raise CliError("response", "検索応答の hits が配列ではありません", EXIT_RESPONSE)
+    return data
+
+
+def check_api(transport):
+    """認証不要の SYNO.API.Info で必要APIの存在とバージョン範囲を確認する。"""
+    response = require_dict(transport.call(INFO_URL, {
+        "api": "SYNO.API.Info", "version": "1", "method": "query",
+        "query": "%s,%s" % (AUTH_API, SEARCH_API),
+    }), "API情報")
+    if not response.get("success"):
+        raise CliError("api", "API情報の取得失敗（コード %s）" % api_code_of(response),
+                       EXIT_API, api_code_of(response))
+    data = response.get("data") or {}
+    report = {"schema_version": SCHEMA_VERSION, "ok": True, "apis": {}}
+    for name, want in ((AUTH_API, AUTH_VERSION), (SEARCH_API, SEARCH_VERSION)):
+        info = data.get(name)
+        entry = {"present": isinstance(info, dict), "required_version": int(want)}
+        if isinstance(info, dict):
+            entry.update({"path": info.get("path"),
+                          "min_version": info.get("minVersion"),
+                          "max_version": info.get("maxVersion")})
+            try:
+                entry["supported"] = int(info["minVersion"]) <= int(want) <= int(info["maxVersion"])
+            except (KeyError, TypeError, ValueError):
+                entry["supported"] = False
+        else:
+            entry["supported"] = False
+        report["apis"][name] = entry
+        report["ok"] = report["ok"] and entry["supported"]
+    return report
+
+
+# ---------------------------------------------------------------- 出力整形
+
+def normalize_hit(item):
+    if not isinstance(item, dict):
+        item = {}
+    return {key: convert(item.get(field)) for key, field, convert in HIT_KEY_MAP}
+
+
+def normalize_prefix(prefix):
+    """許可パスの接頭辞を /共有名[/サブパス] の形にそろえる。不正なら None。"""
+    if not isinstance(prefix, str) or not prefix.startswith("/") or ".." in prefix.split("/"):
+        return None
+    cleaned = posixpath.normpath(prefix)
+    if cleaned in ("/", "//"):
+        return None
+    return cleaned
+
+
+def path_allowed(share_path, prefixes):
+    """share_path が接頭辞のどれかと同じか、その配下なら True（/a は /ab に一致しない）。"""
+    # ".." は正規化前に拒否する（正規化すると /許可/../他 が /他 に化けるため）
+    if (not isinstance(share_path, str) or not share_path.startswith("/")
+            or ".." in share_path.split("/")):
+        return False
+    path = posixpath.normpath(share_path)
+    return any(path == prefix or path.startswith(prefix + "/") for prefix in prefixes)
+
+
+def build_result(query, limit, offset, data, allow_prefixes=None):
+    raw_hits = data.get("hits", [])
+    hits = [normalize_hit(item) for item in raw_hits]
+    filtered = bool(allow_prefixes)
+    if filtered:
+        hits = [hit for hit in hits if path_allowed(hit["share_path"], allow_prefixes)]
+    unavailable = data.get("unavail")
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "query": query,
+        "offset": offset,
+        "limit": limit,
+        # 絞り込み時は範囲外の件数を漏らさないため null
+        "total": None if filtered else to_int(data.get("total")),
+        "returned": len(hits),
+        # 次ページの offset。API が limit 件そろえて返したときだけ続きがあり得る
+        "next_offset": offset + len(raw_hits) if len(raw_hits) >= limit else None,
+        "has_error": to_bool(data.get("has_error")),
+        "unavailable": unavailable if isinstance(unavailable, list) else None,
+        "hits": hits,
+    }
+
+
+def sanitize_text(value):
+    """端末向け表示で制御文字（エスケープシーケンス等）を無害化する。"""
+    text = "" if value is None else str(value)
+    return "".join(
+        ch if (ch >= " " and not ("\x7f" <= ch <= "\x9f")) else "\\x%02x" % ord(ch)
+        for ch in text)
+
+
+def format_text(result):
+    lines = ["検索: %s / 総件数: %s / 表示: %s" % (
+        sanitize_text(result["query"]),
+        "不明" if result["total"] is None else result["total"],
+        result["returned"])]
+    for index, hit in enumerate(result["hits"], start=result["offset"] + 1):
+        name = hit["name"] if hit["name"] is not None else "(名称なし)"
+        lines.append("%s. %s  %s" % (index, sanitize_text(name),
+                                     sanitize_text(hit["share_path"] or "")))
+    return "\n".join(lines)
+
+
+def emit_error(error, as_json, stderr):
+    if as_json:
+        payload = {"schema_version": SCHEMA_VERSION, "error": {
+            "type": error.kind, "message": error.message,
+            "api_code": error.api_code, "exit_code": error.exit_code}}
+        print(json.dumps(payload, ensure_ascii=False), file=stderr)
+    else:
+        print("エラー: %s" % error.message, file=stderr)
+
+
+# ---------------------------------------------------------------- 入力
+
+class TtyPrompter:
+    """資格情報は /dev/tty からのみ読む。stdin にフォールバックしない。"""
+
+    def __init__(self, tty_path="/dev/tty"):
+        self.tty_path = tty_path
+
+    def _require_tty(self):
+        try:
+            with open(self.tty_path, "r"):
+                pass
+        except OSError:
+            raise CliError(
+                "no_tty",
+                "対話入力用のTTYがありません（ssh -t で実行するか、本人が検索セッションを開始してください）",
+                EXIT_NO_TTY)
+
+    def username(self):
+        self._require_tty()
+        # 端末はシーク不可のため "r+" のテキストモードでは開けない。読み書きを分けて開く。
+        with open(self.tty_path, "w", encoding="utf-8") as out:
+            out.write("DSMユーザー名: ")
+            out.flush()
+        with open(self.tty_path, "r", encoding="utf-8") as tty:
+            line = tty.readline()
+        if not line:
+            raise CliError("no_tty", "ユーザー名を読み取れませんでした", EXIT_NO_TTY)
+        return line.strip()
+
+    def secret(self, label):
+        self._require_tty()
+        # getpass はロケールの文字コードで見出しを書くため、DSM の C ロケールでは
+        # 日本語が「?」に化ける（2026-11-04 実機）。見出しは自前で UTF-8 で書く。
+        with open(self.tty_path, "w", encoding="utf-8") as out:
+            out.write(label)
+            out.flush()
+        return getpass.getpass("")
+
+
+# ---------------------------------------------------------------- CLI
+
+class _Parser(argparse.ArgumentParser):
+    def error(self, message):
+        self.print_usage(sys.stderr)
+        print("%s: エラー: %s" % (self.prog, message), file=sys.stderr)
+        sys.exit(EXIT_USAGE)
+
+
+def build_parser():
+    parser = _Parser(
+        prog="synosearch",
+        description="Synology Universal SearchをSSHから検索（sudo不要・対話認証）")
+    parser.add_argument("query", nargs="?", help="検索語")
+    parser.add_argument("--limit", type=int, default=10, help="取得件数（1〜100、既定10）")
+    parser.add_argument("--offset", type=int, default=0, help="開始位置（0以上、既定0）")
+    parser.add_argument("--json", action="store_true", help="結果をJSONで出力（docs/cli-spec.md）")
+    parser.add_argument("--raw", action="store_true",
+                        help="APIの data をそのままJSON出力（実機の応答形式検証用）")
+    parser.add_argument("--user", help="DSMユーザー名（省略時は対話入力）")
+    parser.add_argument("--timeout", type=float, default=45.0, help="HTTPタイムアウト秒（既定45）")
+    parser.add_argument("--allow-prefix", action="append", default=[], metavar="PATH",
+                        help="この共有パス（例 /archive）配下の結果だけを出す。複数指定可。"
+                             "DSM の権限設定に加える多層防御")
+    parser.add_argument("--no-session", action="store_true",
+                        help="検索セッションが動いていても使わず、対話ログインで検索する")
+    parser.add_argument("--check-api", action="store_true",
+                        help="認証なしで必要APIの有無とバージョンを確認して終了")
+    parser.add_argument("--version", action="version", version="%(prog)s " + VERSION)
+    return parser
+
+
+def validate_args(parser, args):
+    if args.check_api:
+        return
+    if args.query is None or args.query.strip() == "":
+        parser.error("検索語を指定してください")
+    if not (1 <= args.limit <= 100):
+        parser.error("--limit は1〜100")
+    if args.offset < 0:
+        parser.error("--offset は0以上")
+    if not (0 < args.timeout <= 600):
+        parser.error("--timeout は0より大きく600以下")
+    prefixes = []
+    for prefix in args.allow_prefix:
+        cleaned = normalize_prefix(prefix)
+        if cleaned is None:
+            parser.error("--allow-prefix は / で始まる共有パス（/ 単独や .. は不可）: %s" % prefix)
+        prefixes.append(cleaned)
+    args.allow_prefix = prefixes
+    if prefixes and args.raw:
+        parser.error("--raw は絞り込みをしないため --allow-prefix と併用できません")
+
+
+def restrict_result(result, prefixes):
+    """待機役から受け取った結果を、さらに狭い接頭辞で絞る（広げることはできない）。"""
+    hits = [hit for hit in result.get("hits", [])
+            if isinstance(hit, dict) and path_allowed(hit.get("share_path"), prefixes)]
+    narrowed = dict(result)
+    narrowed["hits"] = hits
+    narrowed["returned"] = len(hits)
+    narrowed["total"] = None
+    return narrowed
+
+
+def wants_session(args, socket_path):
+    """待機役が動いていて、対話専用の指定が無ければ待機役を使う。"""
+    if args.no_session or args.raw or args.user:
+        return False
+    return os.path.exists(socket_path)
+
+
+def run(args, transport, prompter, stdout, stderr, socket_path):
+    as_json = args.json or args.raw or args.check_api
+    if args.check_api:
+        report = check_api(transport)
+        print(json.dumps(report, ensure_ascii=False), file=stdout)
+        return EXIT_OK if report["ok"] else EXIT_RESPONSE
+
+    if wants_session(args, socket_path):
+        response = broker_request(socket_path, {
+            "op": "search", "query": args.query,
+            "limit": args.limit, "offset": args.offset}, args.timeout + 15)
+        result = response.get("result")
+        if not isinstance(result, dict):
+            raise CliError("response", "検索セッションの応答形式が想定外です", EXIT_RESPONSE)
+        if args.allow_prefix:
+            result = restrict_result(result, args.allow_prefix)
+        if as_json:
+            print(json.dumps(result, ensure_ascii=False), file=stdout)
+        else:
+            print(format_text(result), file=stdout)
+        return EXIT_OK
+
+    username = args.user or prompter.username()
+    if not username:
+        raise CliError("usage", "ユーザー名が空です", EXIT_USAGE)
+    password = prompter.secret("DSMパスワード: ")
+    otp = prompter.secret("2FA認証コード: ")
+    sid = None
+    try:
+        sid = login(transport, username, password, otp)
+        password = otp = None
+        data = search(transport, sid, args.query, args.limit, args.offset)
+    finally:
+        password = otp = None
+        if sid and not logout(transport, sid):
+            print("警告: ログアウトを確認できませんでした", file=stderr)
+        sid = None
+
+    if args.raw:
+        print(json.dumps({"schema_version": SCHEMA_VERSION, "query": args.query,
+                          "raw": data}, ensure_ascii=False), file=stdout)
+    else:
+        result = build_result(args.query, args.limit, args.offset, data, args.allow_prefix)
+        if as_json:
+            print(json.dumps(result, ensure_ascii=False), file=stdout)
+        else:
+            print(format_text(result), file=stdout)
+    return EXIT_OK
+
+
+# ---------------------------------------------------------------- 検索セッション（待機役）
+#
+# 本人が TTY で一度ログインし、SID をこのプロセスのメモリにだけ保持する。
+# UNIX ソケット（ディレクトリ 0700・ソケット 0600・同一UIDのみ）で「検索」「状態」「停止」
+# だけを受け付ける。SID はファイルにもソケット応答にも出さない。
+# 設計: docs/design-noninteractive-auth.md
+
+DEFAULT_MAX_AGE = "8h"
+MAX_MAX_AGE = 24 * 3600
+MIN_MAX_AGE = 60
+DEFAULT_KEEPALIVE = "10m"
+MAX_CONSECUTIVE_FAILURES = 3
+MAX_REQUEST_BYTES = 64 * 1024
+MAX_RESPONSE_BYTES = 16 * 1024 * 1024
+MAX_QUERY_CHARS = 1000
+MAX_OFFSET = 100000
+SOCKET_NAME = "broker.sock"
+LOG_NAME = "broker.log"
+KEEPALIVE_QUERY = "keepalive"
+
+
+def state_dir_from(environ):
+    return (environ.get("SYNOSEARCH_STATE_DIR")
+            or os.path.join(os.path.expanduser("~"), ".synosearch"))
+
+
+def socket_path_in(state_dir):
+    return os.path.join(state_dir, SOCKET_NAME)
+
+
+def utc_text(seconds):
+    return datetime.datetime.fromtimestamp(
+        seconds, datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+
+def parse_duration(text):
+    """'8h' '30m' '45s' '3600' を秒に。不正なら None。"""
+    if not isinstance(text, str) or not text:
+        return None
+    units = {"h": 3600, "m": 60, "s": 1}
+    unit = 1
+    if text[-1] in units:
+        unit = units[text[-1]]
+        text = text[:-1]
+    if not text.isdigit():
+        return None
+    return int(text) * unit
+
+
+def is_int(value):
+    return isinstance(value, int) and not isinstance(value, bool)
+
+
+def session_required_error():
+    return CliError(
+        "session_required",
+        "検索セッションがありません。本人が ssh -t で `synosearch session start` を実行してください",
+        EXIT_SESSION_REQUIRED)
+
+
+def error_payload(error):
+    return {"ok": False, "error": {
+        "type": error.kind, "message": error.message,
+        "api_code": error.api_code, "exit_code": error.exit_code}}
+
+
+def ensure_private_dir(path):
+    try:
+        os.mkdir(path, 0o700)
+    except FileExistsError:
+        pass
+    info = os.lstat(path)
+    if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
+        raise CliError("state", "状態ディレクトリが自分所有のディレクトリではありません: %s" % path,
+                       EXIT_SESSION_STATE)
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        os.chmod(path, 0o700)
+
+
+def peer_uid(conn):
+    option = getattr(socket, "SO_PEERCRED", None)
+    if option is None:
+        return None  # Linux 以外（開発用 macOS など）。ソケットの 0600 で守る
+    data = conn.getsockopt(socket.SOL_SOCKET, option, struct.calcsize("3i"))
+    return struct.unpack("3i", data)[1]
+
+
+def recv_line(conn, limit):
+    chunks = []
+    size = 0
+    while True:
+        chunk = conn.recv(65536)
+        if not chunk:
+            break
+        chunks.append(chunk)
+        size += len(chunk)
+        if size > limit:
+            raise ValueError("too large")
+        if b"\n" in chunk:
+            break
+    return b"".join(chunks).split(b"\n", 1)[0]
+
+
+def socket_is_live(path):
+    probe = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    probe.settimeout(2)
+    try:
+        probe.connect(path)
+        return True
+    except OSError:
+        return False
+    finally:
+        probe.close()
+
+
+def create_listener(path):
+    if os.path.lexists(path):
+        if socket_is_live(path):
+            raise CliError("session_running",
+                           "検索セッションはすでに動いています（synosearch session status）",
+                           EXIT_SESSION_STATE)
+        if not stat.S_ISSOCK(os.lstat(path).st_mode):
+            raise CliError("state", "ソケットの位置に別のファイルがあります: %s" % path,
+                           EXIT_SESSION_STATE)
+        os.unlink(path)  # 前回の異常終了で残った古いソケット
+    listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    old_umask = os.umask(0o177)
+    try:
+        listener.bind(path)
+    finally:
+        os.umask(old_umask)
+    os.chmod(path, 0o600)
+    listener.listen(8)
+    return listener
+
+
+def make_logger(path):
+    """イベントと件数だけを記録する。検索語・SID・資格情報は書かない。"""
+    def log(event, **fields):
+        record = {"time": utc_text(time.time()), "event": event}
+        record.update(fields)
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+            with os.fdopen(fd, "a", encoding="utf-8") as handle:
+                handle.write(json.dumps(record, ensure_ascii=False) + "\n")
+        except OSError:
+            pass
+    return log
+
+
+class Broker:
+    def __init__(self, transport, sid, allow_prefixes, max_age, keepalive,
+                 clock=time.time, log=None):
+        self.transport = transport
+        self._sid = sid
+        self.allow_prefixes = list(allow_prefixes)
+        self.clock = clock
+        self.started_at = clock()
+        self.expires_at = self.started_at + max_age
+        self.keepalive = keepalive
+        self.last_keepalive = self.started_at
+        self.searches = 0
+        self.failures = 0
+        self.last_error = None
+        self.stopping = False
+        self.stop_reason = None
+        self.log = log or (lambda event, **fields: None)
+
+    def status(self):
+        return {
+            "started_utc": utc_text(self.started_at),
+            "expires_utc": utc_text(self.expires_at),
+            "remaining_seconds": max(0, int(self.expires_at - self.clock())),
+            "allow_prefixes": list(self.allow_prefixes),
+            "searches": self.searches,
+            "consecutive_failures": self.failures,
+            "last_error": self.last_error,
+        }
+
+    def stop(self, reason):
+        if not self.stopping:
+            self.stopping = True
+            self.stop_reason = reason
+
+    def _record_failure(self, error):
+        self.failures += 1
+        self.last_error = {"type": error.kind, "api_code": error.api_code}
+        if self.failures >= MAX_CONSECUTIVE_FAILURES:
+            # 連続失敗はセッション失効などが疑われるが原因は断定しない。安全側に倒して終了する。
+            self.stop("consecutive_failures")
+
+    def handle(self, request):
+        if not isinstance(request, dict):
+            return error_payload(CliError("usage", "要求の形式が不正です", EXIT_USAGE))
+        op = request.get("op")
+        if op == "status":
+            return {"ok": True, "status": self.status()}
+        if op == "stop":
+            self.stop("requested")
+            return {"ok": True}
+        if op == "search":
+            return self._search(request)
+        return error_payload(CliError("usage", "未対応の操作です", EXIT_USAGE))
+
+    def _search(self, request):
+        if self.clock() >= self.expires_at:
+            self.stop("expired")
+            return error_payload(session_required_error())
+        query = request.get("query")
+        limit = request.get("limit", 10)
+        offset = request.get("offset", 0)
+        if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_CHARS:
+            return error_payload(CliError("usage", "検索語が不正です", EXIT_USAGE))
+        if not is_int(limit) or not 1 <= limit <= 100:
+            return error_payload(CliError("usage", "limit は1〜100", EXIT_USAGE))
+        if not is_int(offset) or not 0 <= offset <= MAX_OFFSET:
+            return error_payload(CliError("usage", "offset は0〜%d" % MAX_OFFSET, EXIT_USAGE))
+        try:
+            data = search(self.transport, self._sid, query, limit, offset)
+        except CliError as exc:
+            self._record_failure(exc)
+            self.log("search_failed", type=exc.kind, api_code=exc.api_code)
+            return error_payload(exc)
+        self.failures = 0
+        self.searches += 1
+        result = build_result(query, limit, offset, data, self.allow_prefixes)
+        self.log("search", returned=result["returned"])
+        return {"ok": True, "result": result}
+
+    def tick(self):
+        now = self.clock()
+        if now >= self.expires_at:
+            self.stop("expired")
+            return
+        if self.keepalive and now - self.last_keepalive >= self.keepalive:
+            self.last_keepalive = now
+            try:
+                search(self.transport, self._sid, KEEPALIVE_QUERY, 1, 0)
+                self.failures = 0
+            except CliError as exc:
+                self._record_failure(exc)
+                self.log("keepalive_failed", type=exc.kind, api_code=exc.api_code)
+
+    def serve_connection(self, conn):
+        conn.settimeout(10)
+        uid = peer_uid(conn)
+        if uid is not None and uid != os.getuid():
+            self.log("peer_rejected", uid=uid)
+            return
+        try:
+            line = recv_line(conn, MAX_REQUEST_BYTES)
+        except (ValueError, OSError):
+            response = error_payload(CliError("usage", "要求が大きすぎるか読み取れません", EXIT_USAGE))
+        else:
+            if not line.strip():
+                return  # 生存確認の接続
+            try:
+                request = json.loads(line.decode("utf-8"))
+            except (UnicodeDecodeError, ValueError):
+                response = error_payload(CliError("usage", "要求がJSONではありません", EXIT_USAGE))
+            else:
+                response = self.handle(request)
+        try:
+            conn.sendall((json.dumps(response, ensure_ascii=False) + "\n").encode("utf-8"))
+        except OSError:
+            pass
+
+    def serve(self, listener):
+        listener.settimeout(1.0)
+        while not self.stopping:
+            self.tick()
+            if self.stopping:
+                break
+            try:
+                conn, _ = listener.accept()
+            except socket.timeout:
+                continue
+            except OSError:
+                if self.stopping:
+                    break
+                raise
+            with conn:
+                self.serve_connection(conn)
+
+    def close(self):
+        ok = logout(self.transport, self._sid) if self._sid else True
+        self._sid = None
+        self.log("logout", ok=ok, reason=self.stop_reason)
+        return ok
+
+
+def run_broker(broker, listener, socket_path):
+    broker.log("start", allow_prefixes=broker.allow_prefixes,
+               expires_utc=utc_text(broker.expires_at))
+    try:
+        broker.serve(listener)
+    finally:
+        listener.close()
+        try:
+            os.unlink(socket_path)
+        except OSError:
+            pass
+        broker.close()
+
+
+def broker_request(socket_path, request, timeout):
+    client = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    client.settimeout(timeout)
+    try:
+        try:
+            client.connect(socket_path)
+        except socket.timeout:
+            raise CliError("network", "検索セッションに接続できません（応答なし）", EXIT_NETWORK)
+        except OSError:
+            raise session_required_error()
+        client.sendall((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
+        line = recv_line(client, MAX_RESPONSE_BYTES)
+    except socket.timeout:
+        raise CliError("network", "検索セッションの応答がありません", EXIT_NETWORK)
+    except ValueError:
+        raise CliError("response", "検索セッションの応答が大きすぎます", EXIT_RESPONSE)
+    except OSError as exc:
+        raise CliError("network", "検索セッションとの通信に失敗しました（%s）"
+                       % type(exc).__name__, EXIT_NETWORK)
+    finally:
+        client.close()
+    try:
+        response = json.loads(line.decode("utf-8"))
+    except (UnicodeDecodeError, ValueError):
+        raise CliError("response", "検索セッションの応答がJSONではありません", EXIT_RESPONSE)
+    if not isinstance(response, dict) or "ok" not in response:
+        raise CliError("response", "検索セッションの応答形式が想定外です", EXIT_RESPONSE)
+    if not response["ok"]:
+        error = response.get("error") if isinstance(response.get("error"), dict) else {}
+        code = error.get("exit_code")
+        raise CliError(str(error.get("type", "api")), str(error.get("message", "")),
+                       code if is_int(code) and 1 <= code <= 130 else EXIT_API,
+                       error.get("api_code"))
+    return response
+
+
+def build_session_parser():
+    parser = _Parser(prog="synosearch session",
+                     description="検索セッション（本人が一度ログインし、期限まで検索だけを受け付ける）")
+    sub = parser.add_subparsers(dest="action")
+    sub.required = True
+    start = sub.add_parser("start", help="ログインしてセッションを開始（TTY必須）")
+    start.add_argument("--allow-prefix", action="append", default=[], metavar="PATH",
+                       required=True, help="検索結果を出す共有パス（例 /archive）。必須・複数可")
+    start.add_argument("--user", help="DSMユーザー名（省略時は対話入力）")
+    start.add_argument("--max-age", default=DEFAULT_MAX_AGE,
+                       help="最大寿命（例 8h, 90m。既定 8h、最大 24h）")
+    start.add_argument("--keepalive", default=DEFAULT_KEEPALIVE,
+                       help="セッション維持の検索間隔（例 10m。0で無効。既定 10m）")
+    start.add_argument("--timeout", type=float, default=45.0, help="HTTPタイムアウト秒")
+    start.add_argument("--foreground", action="store_true",
+                       help="バックグラウンドに回らずこの端末で動かす（検証用）")
+    status = sub.add_parser("status", help="セッションの状態を表示")
+    status.add_argument("--json", action="store_true")
+    sub.add_parser("stop", help="セッションを終了してログアウト")
+    return parser
+
+
+def detach_and_serve(broker, listener, socket_path):
+    """子プロセスで端末から切り離して待機役を動かす。戻らない。"""
+    code = 0
+    try:
+        os.setsid()
+        signal.signal(signal.SIGHUP, signal.SIG_IGN)
+        signal.signal(signal.SIGTERM, lambda signum, frame: broker.stop("signal"))
+        signal.signal(signal.SIGINT, lambda signum, frame: broker.stop("signal"))
+        devnull = os.open(os.devnull, os.O_RDWR)
+        for fd in (0, 1, 2):
+            os.dup2(devnull, fd)
+        run_broker(broker, listener, socket_path)
+    except BaseException:
+        code = 1
+    finally:
+        os._exit(code)
+
+
+def session_start(args, transport, prompter, stdout, state_dir, daemonize):
+    prefixes = []
+    for prefix in args.allow_prefix:
+        cleaned = normalize_prefix(prefix)
+        if cleaned is None:
+            raise CliError("usage", "--allow-prefix は / で始まる共有パス（/ 単独や .. は不可）: %s"
+                           % prefix, EXIT_USAGE)
+        prefixes.append(cleaned)
+    max_age = parse_duration(args.max_age)
+    if max_age is None or not MIN_MAX_AGE <= max_age <= MAX_MAX_AGE:
+        raise CliError("usage", "--max-age は 1m〜24h", EXIT_USAGE)
+    keepalive = parse_duration(args.keepalive)
+    if keepalive is None or (keepalive != 0 and not 60 <= keepalive <= max_age):
+        raise CliError("usage", "--keepalive は 0 または 1m〜max-age", EXIT_USAGE)
+
+    ensure_private_dir(state_dir)
+    socket_path = socket_path_in(state_dir)
+    if os.path.lexists(socket_path) and socket_is_live(socket_path):
+        raise CliError("session_running",
+                       "検索セッションはすでに動いています（synosearch session status）",
+                       EXIT_SESSION_STATE)
+
+    transport = transport or HttpTransport(args.timeout)
+    username = args.user or prompter.username()
+    if not username:
+        raise CliError("usage", "ユーザー名が空です", EXIT_USAGE)
+    password = prompter.secret("DSMパスワード: ")
+    otp = prompter.secret("2FA認証コード: ")
+    try:
+        sid = login(transport, username, password, otp)
+    finally:
+        password = otp = None
+    try:
+        listener = create_listener(socket_path)
+    except BaseException:
+        logout(transport, sid)
+        raise
+    broker = Broker(transport, sid, prefixes, max_age, keepalive,
+                    log=make_logger(os.path.join(state_dir, LOG_NAME)))
+    sid = None
+    print("検索セッションを開始しました。期限: %s（UTC）／対象: %s"
+          % (utc_text(broker.expires_at), ", ".join(prefixes)), file=stdout)
+    if hasattr(stdout, "flush"):
+        stdout.flush()
+    if not daemonize or args.foreground:
+        run_broker(broker, listener, socket_path)
+        return EXIT_OK
+    if os.fork() == 0:
+        detach_and_serve(broker, listener, socket_path)
+    listener.close()  # 親は終了するだけ。ログアウトしない（子が保持している）
+    return EXIT_OK
+
+
+def session_main(argv, transport, prompter, stdout, stderr, state_dir, daemonize):
+    parser = build_session_parser()
+    args = parser.parse_args(argv)
+    as_json = getattr(args, "json", False)
+    socket_path = socket_path_in(state_dir)
+    try:
+        if args.action == "start":
+            return session_start(args, transport, prompter or TtyPrompter(), stdout,
+                                 state_dir, daemonize)
+        if args.action == "status":
+            status = broker_request(socket_path, {"op": "status"}, 15)["status"]
+            if as_json:
+                print(json.dumps({"schema_version": SCHEMA_VERSION, "session": status},
+                                 ensure_ascii=False), file=stdout)
+            else:
+                print("検索セッション: 動作中／期限 %s（UTC、残り %d 分）／対象 %s／検索 %d 回"
+                      % (status["expires_utc"], status["remaining_seconds"] // 60,
+                         ", ".join(status["allow_prefixes"]), status["searches"]), file=stdout)
+            return EXIT_OK
+        broker_request(socket_path, {"op": "stop"}, 15)
+        print("検索セッションを終了しました", file=stdout)
+        return EXIT_OK
+    except CliError as exc:
+        emit_error(exc, as_json, stderr)
+        return exc.exit_code
+    except KeyboardInterrupt:
+        emit_error(CliError("interrupted", "中断されました", EXIT_INTERRUPTED), as_json, stderr)
+        return EXIT_INTERRUPTED
+    except Exception as exc:  # 内容は出さない
+        emit_error(CliError("internal", "内部エラー（%s）" % type(exc).__name__, EXIT_INTERNAL),
+                   as_json, stderr)
+        return EXIT_INTERNAL
+
+
+# ---------------------------------------------------------------- AIエージェント用の入口
+#
+# authorized_keys の command= から `synosearch --agent-gateway` として呼ばれる。
+# SSH_ORIGINAL_COMMAND を解析し、次の2つだけを受け付ける（シェルは一切起動しない）:
+#   search <検索語> [--limit N] [--offset N]
+#   status
+# 出力は常に JSON。資格情報の入力は求めない。
+
+GATEWAY_USAGE = "使えるのは `search <検索語> [--limit N] [--offset N]` と `status` だけです"
+
+
+class _GatewayParser(argparse.ArgumentParser):
+    def error(self, message):
+        raise CliError("usage", "%s（%s）" % (GATEWAY_USAGE, message), EXIT_USAGE)
+
+
+def parse_gateway_command(command):
+    try:
+        tokens = shlex.split(command or "")
+    except ValueError:
+        raise CliError("usage", GATEWAY_USAGE, EXIT_USAGE)
+    if tokens == ["status"]:
+        return "status", None
+    if not tokens or tokens[0] != "search":
+        raise CliError("usage", GATEWAY_USAGE, EXIT_USAGE)
+    parser = _GatewayParser(prog="search", add_help=False, allow_abbrev=False)
+    parser.add_argument("query")
+    parser.add_argument("--limit", type=int, default=10)
+    parser.add_argument("--offset", type=int, default=0)
+    args = parser.parse_args(tokens[1:])
+    if not args.query.strip() or len(args.query) > MAX_QUERY_CHARS:
+        raise CliError("usage", "検索語が不正です", EXIT_USAGE)
+    if not 1 <= args.limit <= 100:
+        raise CliError("usage", "--limit は1〜100", EXIT_USAGE)
+    if not 0 <= args.offset <= MAX_OFFSET:
+        raise CliError("usage", "--offset は0〜%d" % MAX_OFFSET, EXIT_USAGE)
+    return "search", {"query": args.query, "limit": args.limit, "offset": args.offset}
+
+
+def gateway_main(command, state_dir, stdout, stderr):
+    socket_path = socket_path_in(state_dir)
+    try:
+        op, params = parse_gateway_command(command)
+        if op == "status":
+            status = broker_request(socket_path, {"op": "status"}, 15)["status"]
+            print(json.dumps({"schema_version": SCHEMA_VERSION, "session": status},
+                             ensure_ascii=False), file=stdout)
+            return EXIT_OK
+        request = {"op": "search"}
+        request.update(params)
+        result = broker_request(socket_path, request, 75).get("result")
+        if not isinstance(result, dict):
+            raise CliError("response", "検索セッションの応答形式が想定外です", EXIT_RESPONSE)
+        print(json.dumps(result, ensure_ascii=False), file=stdout)
+        return EXIT_OK
+    except CliError as exc:
+        emit_error(exc, True, stderr)
+        return exc.exit_code
+    except Exception as exc:  # 内容は出さない
+        emit_error(CliError("internal", "内部エラー（%s）" % type(exc).__name__, EXIT_INTERNAL),
+                   True, stderr)
+        return EXIT_INTERNAL
+
+
+# ---------------------------------------------------------------- 入口
+
+def main(argv=None, transport=None, prompter=None, stdout=None, stderr=None,
+         environ=None, daemonize=True):
+    stdout = stdout or sys.stdout
+    stderr = stderr or sys.stderr
+    argv = list(sys.argv[1:] if argv is None else argv)
+    environ = os.environ if environ is None else environ
+    state_dir = state_dir_from(environ)
+    if argv == ["--agent-gateway"]:
+        return gateway_main(environ.get("SSH_ORIGINAL_COMMAND", ""), state_dir, stdout, stderr)
+    if argv[:1] == ["session"]:
+        return session_main(argv[1:], transport, prompter, stdout, stderr, state_dir, daemonize)
+
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    validate_args(parser, args)
+    as_json = args.json or args.raw or args.check_api
+    transport = transport or HttpTransport(args.timeout)
+    prompter = prompter or TtyPrompter()
+    try:
+        return run(args, transport, prompter, stdout, stderr, socket_path_in(state_dir))
+    except CliError as exc:
+        emit_error(exc, as_json, stderr)
+        return exc.exit_code
+    except KeyboardInterrupt:
+        emit_error(CliError("interrupted", "中断されました", EXIT_INTERRUPTED),
+                   as_json, stderr)
+        return EXIT_INTERRUPTED
+    except Exception as exc:  # 想定外。型名のみ出し、内容（秘密を含み得る）は出さない
+        emit_error(CliError("internal", "内部エラー（%s）" % type(exc).__name__,
+                            EXIT_INTERNAL), as_json, stderr)
+        return EXIT_INTERNAL
+
+
+if __name__ == "__main__":
+    sys.exit(main())

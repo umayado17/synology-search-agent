@@ -1,0 +1,8 @@
+{
+  "_note": "合成データ。verification.md の実測（Auth v1-7、Search v1・entry.cgi）に合わせた。",
+  "success": true,
+  "data": {
+    "SYNO.API.Auth": {"path": "entry.cgi", "minVersion": 1, "maxVersion": 7},
+    "SYNO.Finder.FileIndexing.Search": {"path": "entry.cgi", "minVersion": 1, "maxVersion": 1, "requestFormat": "JSON"}
+  }
+}

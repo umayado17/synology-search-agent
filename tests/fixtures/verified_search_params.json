@@ -1,0 +1,15 @@
+{
+  "api": "SYNO.Finder.FileIndexing.Search",
+  "version": "1",
+  "method": "search",
+  "keyword": "\"test\"",
+  "size": "5",
+  "from": "0",
+  "search_weight_list": "[{\"field\": \"SYNOMDWildcard\", \"weight\": 1}, {\"field\": \"SYNOMDTextContent\", \"weight\": 1}, {\"field\": \"SYNOMDSearchFileName\", \"weight\": 8.5, \"trailing_wildcard\": true}]",
+  "fields": "[\"SYNOMDSharePath\", \"SYNOMDFSName\", \"SYNOMDFSSize\", \"SYNOMDIsDir\", \"SYNOMDContentModificationDate\"]",
+  "sorter_field": "\"relevance\"",
+  "sorter_direction": "\"asc\"",
+  "sorter_use_nature_sort": "false",
+  "sorter_show_directory_first": "true",
+  "_sid": "<SID>"
+}

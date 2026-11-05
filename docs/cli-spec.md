@@ -1,0 +1,137 @@
+# synosearch CLI 仕様（v0.4.0 / JSON schema_version 1）
+
+この文書が CLI の外部契約です。変更時は `tests/test_synosearch.py` を同時に更新してください。
+
+## 書式
+
+```
+synosearch QUERY [--limit N] [--offset N] [--json | --raw] [--user NAME] [--timeout SEC] [--allow-prefix PATH ...]
+synosearch --check-api
+synosearch session start --allow-prefix PATH [--user NAME] [--max-age 8h] [--keepalive 10m] [--foreground]
+synosearch session status [--json]
+synosearch session stop
+synosearch --agent-gateway        # authorized_keys の command= 専用。SSH_ORIGINAL_COMMAND を解釈
+synosearch --version | --help
+```
+
+| オプション | 既定 | 制約 / 説明 |
+|---|---|---|
+| `QUERY` | 必須 | 空文字・空白のみは不可。APIへはJSON文字列として送る |
+| `--limit` | 10 | 1〜100（API `size`） |
+| `--offset` | 0 | 0以上（API `from`） |
+| `--json` | off | 正規化済みJSONを stdout へ1行で出力 |
+| `--raw` | off | APIの `data` を無加工で出力。**実機の応答形式検証用**で、形式は保証しない |
+| `--user` | 対話入力 | DSMユーザー名。パスワードとOTPは常に対話入力 |
+| `--timeout` | 45 | HTTPタイムアウト秒（0 < x ≤ 600） |
+| `--allow-prefix` | なし | `/共有名[/サブパス]`。この配下（`share_path` が一致または `PATH/` で始まる）の結果だけを出す。複数指定可。`/` 単独・`..` を含むものは引数エラー。`--raw` とは併用不可。DSM の権限設定に重ねる多層防御 |
+| `--no-session` | off | 検索セッションが動いていても使わず、対話ログインで検索 |
+| `--check-api` | – | 認証なしで `SYNO.API.Info` を照会し、必要APIの有無・バージョン範囲をJSONで出力 |
+
+パスワード・OTP は **`/dev/tty` からのみ**読みます。引数・環境変数・stdin からは受け付けません。
+TTY が無い場合（例: `ssh host synosearch ...`）は通信を一切行わず終了コード 7 で終了します。
+
+## stdout（成功時）
+
+`--json`（型は 2026-11-04 実機 DSM 7.4.1 の応答で確定）:
+
+```json
+{"schema_version": 1, "query": "test", "offset": 0, "limit": 5, "total": 3666, "returned": 5, "next_offset": 5,
+ "has_error": false, "unavailable": [],
+ "hits": [{"name": "Test", "share_path": "/share/dir/Test", "path": "/volume1/share/dir/Test",
+           "extension": "", "size": 4096, "is_dir": true, "modified": 1244279630,
+           "modified_utc": "2009-06-06T09:13:50Z", "readable": true}]}
+```
+
+| キー | 型 | 由来（API） | 備考 |
+|---|---|---|---|
+| `total` | int\|null | `data.total` | 総ヒット数。`--allow-prefix` 指定時は範囲外の件数を漏らさないため常に `null`。インデックス作成中は短時間でも変動する（実測 2,472→3,666） |
+| `returned` | int | `len(hits)` | 絞り込み後の件数 |
+| `next_offset` | int\|null | `offset + API が返した件数` | API が `limit` 件返したときのみ値あり（続きがあり得る）。絞り込みで `returned` が少なくても、次ページはこの値で取る |
+| `has_error` | bool\|null | `data.has_error` | 意味は未確認。そのまま渡す |
+| `unavailable` | array\|null | `data.unavail` | 意味は未確認。そのまま渡す |
+| `hits[].name` | str\|null | `SYNOMDFSName` | |
+| `hits[].share_path` | str\|null | `SYNOMDSharePath` | `/<共有フォルダ名>/.../<名前>`（名前を含む完全パス） |
+| `hits[].path` | str\|null | `SYNOMDPath` | `/volume1/...` の NAS 内絶対パス。要求フィールド外だが実機で返る |
+| `hits[].extension` | str\|null | `SYNOMDExtension` | フォルダは `""` |
+| `hits[].size` | int\|null | `SYNOMDFSSize` | バイト。API は文字列（`"4096"`）で返すので整数化 |
+| `hits[].is_dir` | bool\|null | `SYNOMDIsDir` | API は `"y"`/`"n"` |
+| `hits[].modified` | int\|null | `SYNOMDContentModificationDate` | UNIX 秒。API は文字列 |
+| `hits[].modified_utc` | str\|null | 同上 | `YYYY-MM-DDTHH:MM:SSZ` |
+| `hits[].readable` | bool\|null | `readable` | |
+
+変換できない値・欠けたキーは `null`。`SYNOMDOwnerUserID`・`additional` は出力しない（必要なら `--raw`）。互換性のない変更をするときは `schema_version` を上げます。
+
+検索結果はログインしたDSMユーザーの権限の範囲で返ると考えられます（administrators 所属ユーザーでは他ユーザーの `/homes` 配下も返った）。
+
+テキスト出力（既定）は人間向けで、形式は保証しません。制御文字は `\xNN` に置換されます。
+
+`--check-api`:
+
+```json
+{"schema_version": 1, "ok": true, "apis": {"SYNO.API.Auth": {"present": true, "required_version": 6,
+  "path": "entry.cgi", "min_version": 1, "max_version": 7, "supported": true}, "...": {}}}
+```
+
+## stderr と終了コード
+
+`--json` / `--raw` / `--check-api` 時、エラーは stderr に JSON 1行:
+
+```json
+{"schema_version": 1, "error": {"type": "auth", "message": "認証失敗（コード 404）：…", "api_code": 404, "exit_code": 3}}
+```
+
+それ以外は `エラー: <message>`。ログアウト失敗は終了コードに影響せず、stderr に警告を出すのみ。
+
+| 終了コード | type | 意味 |
+|---|---|---|
+| 0 | – | 成功（`--check-api` は全APIが対応バージョンのとき） |
+| 1 | `internal` | 想定外の例外（メッセージ本文は出さず型名のみ） |
+| 2 | – | 引数エラー（argparse、テキストのみ） |
+| 3 | `auth` | ログイン失敗。`api_code` は DSM のコード（ヒントは参考で断定しない） |
+| 4 | `api` | 検索APIが `success:false`。`119`/`120` 等の意味は前提に依存するため解釈しない |
+| 5 | `network` | 接続不可・TLS・HTTPエラー・タイムアウト |
+| 6 | `response` | 応答がJSONでない/形式が想定外、`--check-api` で非対応 |
+| 7 | `no_tty` | 対話入力に必要なTTYが無い（検索セッションも無い） |
+| 8 | `session_required` | 検索セッションが無い・期限切れ（入口・`session status/stop`） |
+| 9 | `session_running` / `state` | すでにセッションが動いている、状態ディレクトリが不正 |
+| 130 | `interrupted` | Ctrl-C |
+
+## セキュリティ上の不変条件（テストで固定）
+
+- パスワード・OTP・SID は stdout/stderr に出ない
+- ログイン成功後は、検索失敗・中断時も必ずログアウトを試みる
+- 接続先は `https://127.0.0.1:5001` 固定。TLS 検証省略はループバック限定の前提
+
+## 検索セッション（v0.4.0）
+
+本人が TTY で一度ログインし、期限までの間「検索」だけを受け付ける待機役を動かします。設計は `docs/design-noninteractive-auth.md`、導入は `docs/agent-setup.md`。
+
+- `session start`: ユーザー名・パスワード・OTP を TTY から読みログイン → バックグラウンドに回る（`--foreground` で前面実行）。`--allow-prefix` は必須で、結果は常にこの範囲に絞られる。`--max-age` は 1m〜24h（既定 8h）、`--keepalive` は 0 または 1m〜max-age（既定 10m、`keepalive` という語で1件検索してセッションを保つ）
+- 状態は `~/.synosearch/`（0700）。`broker.sock`（0600）と `broker.log`（0600）。`SYNOSEARCH_STATE_DIR` で変更可
+- SID はプロセスのメモリにだけ置き、ファイル・ログ・応答に出さない。ログに検索語は書かない（イベント名と件数のみ）
+- Linux では接続元の UID を `SO_PEERCRED` で確認し、同じユーザー以外を拒否
+- 期限到来・`session stop`・SIGTERM・DSM 呼び出しの3回連続失敗で、ログアウトしてソケットを消して終了
+- セッション中、`synosearch QUERY` はパスワードを聞かずにセッションを使う（`--no-session`・`--raw`・`--user` 指定時は対話）。クライアントの `--allow-prefix` は範囲を狭めることしかできない
+- `session status` の JSON: `{"schema_version":1,"session":{"started_utc","expires_utc","remaining_seconds","allow_prefixes","searches","consecutive_failures","last_error"}}`
+
+## AIエージェント用の入口（`--agent-gateway`）
+
+`authorized_keys` の `command=` から起動され、`SSH_ORIGINAL_COMMAND` の次の2形式だけを受け付けます。シェルは起動しません。
+
+```
+search <検索語> [--limit N] [--offset N]     → stdout に検索結果 JSON（上記 --json と同じ形、total は null）
+status                                        → stdout に {"schema_version":1,"session":{...}}
+```
+
+- 検索語に空白を含むときは引用符で囲む。`-` で始まる語は `search -- -語`
+- それ以外（`--raw`・`--allow-prefix`・`--user`・`stop`・未知の語・`;` など）はすべて終了コード 2
+- エラーは stderr に JSON 1行。セッションが無ければ終了コード 8（`session_required`）。資格情報の入力は求めない
+
+## エージェント側コマンド `clients/nas-search`（v0.1.0）
+
+入口（`--agent-gateway`）を ssh で呼ぶ薄いラッパー。出力・終了コードは入口と同じで、加えて:
+
+- `--max-results N`（1〜1000）: 100件ずつページを送り、最大 N 件を1つの JSON にまとめる（`pages_fetched` を追加、最大20ページ）
+- 設定: `--host`/`--key` > 環境変数 `SYNOSEARCH_HOST`/`SYNOSEARCH_KEY` > `~/.config/synosearch/client.conf`（`SYNOSEARCH_CLIENT_CONFIG` で変更可）。未設定は exit 2（`type: config`）
+- ssh 自体の失敗（ssh の終了コード 255）は exit 5（`type: ssh`）。パスワード認証は試さない
+- 送る文字列は `search --limit N --offset N -- <shlex.quote(検索語)>`
