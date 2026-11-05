@@ -370,6 +370,19 @@ class CheckApiTest(unittest.TestCase):
         self.assertEqual(code, cli.EXIT_RESPONSE)
 
 
+def read_terminal_until(master, text, timeout=3.0):
+    """擬似端末の出力を、text が現れるか時間切れまで読み続ける（出る順番に左右されない）。"""
+    import select
+    import time
+    seen = b""
+    deadline = time.time() + timeout
+    while text.encode("utf-8") not in seen and time.time() < deadline:
+        ready, _, _ = select.select([master], [], [], 0.1)
+        if ready:
+            seen += os.read(master, 1024)
+    return seen.decode("utf-8", "replace")
+
+
 class TtyPrompterTest(unittest.TestCase):
     """本物の擬似端末で TtyPrompter を動かす（2026-11-04 実機で UnsupportedOperation の回帰）。"""
 
@@ -380,7 +393,7 @@ class TtyPrompterTest(unittest.TestCase):
             os.write(master, "alice\n".encode("utf-8"))
             name = cli.TtyPrompter(os.ttyname(slave)).username()
             self.assertEqual(name, "alice")
-            self.assertIn("DSMユーザー名", os.read(master, 1024).decode("utf-8"))
+            self.assertIn("DSMユーザー名", read_terminal_until(master, "DSMユーザー名"))
         finally:
             os.close(master)
             os.close(slave)

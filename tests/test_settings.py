@@ -6,7 +6,8 @@ import tempfile
 import unittest
 import unittest.mock
 
-from test_synosearch import FakePrompter, FakeTransport, LOGIN_OK, LOGOUT_OK, SECRETS, cli
+from test_synosearch import (FakePrompter, FakeTransport, LOGIN_OK, LOGOUT_OK, SECRETS, cli,
+                             read_terminal_until)
 
 ALLOWED = "/archive"
 
@@ -187,7 +188,7 @@ class InteractivePromptTest(unittest.TestCase):
         master, slave = pty.openpty()
         try:
             cli.TtyPrompter(os.ttyname(slave)).notice("DSM アカウント: search-agent\n")
-            self.assertIn("search-agent", os.read(master, 1024).decode("utf-8"))
+            self.assertIn("search-agent", read_terminal_until(master, "search-agent"))
         finally:
             os.close(master)
             os.close(slave)
