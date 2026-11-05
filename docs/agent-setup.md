@@ -4,7 +4,7 @@ NAS 上のファイルを追加・変更する手順です。**すべて本人�
 前提（例）:
 
 - 検索専用の DSM ユーザー `search-agent`（グループ `users` のみ・2段階認証あり）。検索させたい共有フォルダ（例 `/archive`）だけ読み取り専用、それ以外は「アクセスなし」
-- その共有フォルダが Universal Search のインデックス対象になっている
+- Universal Search が入っていて、その共有フォルダが索引の対象になっている（[README の「使う前の準備」](../README.md#使う前の準備nas-側)）。対象にしないと索引は作られず、検索しても何も返らない
 - NAS に SSH できるユーザー `<ssh-user>`（DSM では administrators のみ SSH 可）
 - `<nas-host>` は NAS のホスト名か IP、`<HOME>` は `<ssh-user>` のホームディレクトリ
 

@@ -10,6 +10,14 @@ Synology NAS の **Universal Search（全文検索）の既存インデックス
 > [!WARNING]
 > Synology が公開していない Web API（`SYNO.Finder.FileIndexing.Search`）を使っています。DSM の更新で予告なく動かなくなる可能性があります。Synology 社とは関係のない非公式ツールです。
 
+## なぜ作ったか
+
+`find` や `grep` は、検索のたびにファイルを走査します。ファイル名だけなら速いこともありますが、本文の検索はデータが大きいと使えません。Synology の Universal Search は、本文まで含めた索引をすでに作っています。ところが、それをプログラムから使う公開された入口がありません。
+
+このツールは、新しく索引を作るのではなく、**すでにある Universal Search の索引を AI エージェントから使えるようにします**。エージェントは名前・パス・更新日などの候補だけを受け取り、必要なファイルだけを開きます。root や sudo を渡さず、検索だけを渡すように作っています。
+
+くわしい経緯は [docs/background.md](docs/background.md) にあります。
+
 ## 動作確認済みの環境
 
 - Synology DS225+、DSM 7.4.1（build 90080）、NAS 側 Python 3.8.15
@@ -36,6 +44,17 @@ AIエージェント ──ssh（検索専用の鍵）──▶ NAS: synosearch 
 | [`clients/nas-search`](clients/nas-search) | エージェント側のコマンド。ssh を組み立てて結果を返す |
 | [`skills/nas-search/SKILL.md`](skills/nas-search/SKILL.md) | エージェント向けの説明書（Claude Code のスキル形式） |
 | [`scripts/remote-run.sh`](scripts/remote-run.sh) | NAS にファイルを置かずに試すためのスクリプト |
+
+## 使う前の準備（NAS 側）
+
+1. **Universal Search が入っているか確かめる。** DSM の「パッケージセンター」→「インストール済み」に「Universal Search」があるか見てください。無ければパッケージセンターからインストールします。最初から入っているかどうかは、Synology の公式の資料では確認できませんでした（作者の DS225+ / DSM 7.4.1 では入っていました）
+2. **索引を作る共有フォルダを指定する。** Universal Search の設定（右上の歯車）→「File Indexing」→「Indexed Folder List」で、検索させたいフォルダを追加します。**指定しないと索引は作られず、検索しても何も返りません。** Synology の公式ヘルプでも、索引を作っていないフォルダのファイルは結果に出ず、File Station や SMB で使うフォルダは自分で追加する必要があるとされています（[File Indexing](https://kb.synology.com/en-global/DSM/help/SynoFinder/universalsearch_index?version=7)）。本文まで検索するには、方法に「File content indexing」を選びます
+3. **検索専用の DSM アカウントを作る。** 管理者にしない、2段階認証をかける、検索させたい共有フォルダだけを読めるようにします。`homes` を読めるようにすると、全員のホームフォルダが結果に出るので注意してください
+
+索引の対象外のフォルダでは、0件でも「ファイルがない」とは言えません。
+
+> [!NOTE]
+> DSM には、名前が同じ `/usr/syno/bin/synosearch`（ヘルプを検索するコマンド）があります。このツールとは別物です。PATH の順番によっては DSM の方が動くので、`~/.local/bin/synosearch` のように場所まで書いて実行してください。
 
 ## 使い方
 
