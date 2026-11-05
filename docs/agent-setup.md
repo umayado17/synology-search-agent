@@ -35,6 +35,9 @@ ssh -t <ssh-user>@<nas-host> '~/.local/bin/synosearch session start --user searc
 ```
 
 SSH のパスワード（<ssh-user>）→ DSM パスワード（search-agent）→ 2FA コード（search-agent）の順に入力します。
+DSM の入力の前に「DSM アカウント: search-agent」と表示されます。SSH のアカウントではなく、こちらのパスワードとコードを入れてください。
+
+期間を毎回指定したくないときは、NAS の `~/.config/synosearch/server.conf` に書いておけます（例 `session_max_age = 7d`。最大 90d）。24時間を超える期間で DSM 側のログインがもつかは未確認です。
 「検索セッションを開始しました」と出たら、SSH を閉じてかまいません。
 
 ## 3. SSH を閉じても残っているか確認（初回は必ず）
@@ -84,7 +87,7 @@ ssh -i ~/.ssh/synosearch_agent -o IdentitiesOnly=yes <ssh-user>@<nas-host> statu
 ```bash
 mkdir -p ~/.local/bin ~/.config/synosearch
 cp clients/nas-search ~/.local/bin/nas-search && chmod 755 ~/.local/bin/nas-search
-printf 'host=<ssh-user>@<nas-host>\nkey=~/.ssh/synosearch_agent\n' > ~/.config/synosearch/client.conf
+printf 'host=<ssh-user>@<nas-host>\nkey=~/.ssh/synosearch_agent\n# timeout=120\n' > ~/.config/synosearch/client.conf
 chmod 600 ~/.config/synosearch/client.conf
 ```
 

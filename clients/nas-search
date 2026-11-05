@@ -16,7 +16,7 @@ import shlex
 import subprocess
 import sys
 
-VERSION = "0.2.0"
+VERSION = "0.3.0"
 SCHEMA_VERSION = 1
 
 EXIT_OK = 0
@@ -36,9 +36,12 @@ SSH_OPTIONS = [
     "-o", "PasswordAuthentication=no",
     "-o", "KbdInteractiveAuthentication=no",
     "-o", "LogLevel=ERROR",
-    "-o", "ConnectTimeout=15",
     "-T",
 ]
+DEFAULT_TIMEOUT = 120         # NAS 側の入口の待ち時間（既定 95 秒）より長く
+DEFAULT_CONNECT_TIMEOUT = 15
+CONFIG_KEYS = ("host", "key", "timeout", "connect_timeout")
+SECRET_WORDS = ("pass", "otp", "sid", "secret", "token", "cookie", "credential")
 
 
 class ClientError(Exception):
@@ -58,19 +61,39 @@ def emit_error(error, stderr):
 # ---------------------------------------------------------------- 設定
 
 def read_config_file(path):
-    """KEY=VALUE 形式（host=, key=）。# で始まる行は無視。無ければ空。"""
+    """KEY=VALUE 形式（host, key, timeout, connect_timeout）。# で始まる行は無視。無ければ空。"""
     values = {}
     try:
         with open(path, encoding="utf-8") as handle:
-            for line in handle:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                name, value = line.split("=", 1)
-                values[name.strip().lower()] = value.strip()
+            lines = handle.read().splitlines()
     except FileNotFoundError:
-        pass
+        return values
+    for number, line in enumerate(lines, start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise ClientError("config", "%s の %d 行目: `名前=値` の形で書いてください"
+                              % (path, number), EXIT_USAGE)
+        name, value = line.split("=", 1)
+        name = name.strip().lower()
+        if any(word in name for word in SECRET_WORDS):
+            raise ClientError("config", "%s の %d 行目: 設定ファイルにパスワードなどは書けません"
+                              % (path, number), EXIT_USAGE)
+        if name not in CONFIG_KEYS:
+            raise ClientError("config", "%s の %d 行目: 知らない設定名です（使えるもの: %s）"
+                              % (path, number, ", ".join(CONFIG_KEYS)), EXIT_USAGE)
+        values[name] = value.strip()
     return values
+
+
+def seconds_setting(value, name, low, high):
+    if value is None:
+        return None
+    text = str(value)
+    if not text.isdigit() or not low <= int(text) <= high:
+        raise ClientError("config", "%s は %d〜%d の整数（秒）" % (name, low, high), EXIT_USAGE)
+    return int(text)
 
 
 def resolve_config(args, environ):
@@ -89,7 +112,11 @@ def resolve_config(args, environ):
     key = os.path.expanduser(key)
     if not os.path.isfile(key):
         raise ClientError("config", "鍵ファイルがありません: %s" % key, EXIT_USAGE)
-    return host, key
+    timeout = args.timeout if args.timeout is not None else (
+        seconds_setting(file_values.get("timeout"), "timeout", 5, 600) or DEFAULT_TIMEOUT)
+    connect_timeout = seconds_setting(file_values.get("connect_timeout"), "connect_timeout",
+                                      1, 120) or DEFAULT_CONNECT_TIMEOUT
+    return host, key, timeout, connect_timeout
 
 
 # ---------------------------------------------------------------- 遠隔呼び出し
@@ -99,14 +126,16 @@ def search_command(query, limit, offset):
     return "search --limit %d --offset %d -- %s" % (limit, offset, shlex.quote(query))
 
 
-def ssh_argv(ssh_bin, host, key, remote_command):
-    return [ssh_bin, "-i", key] + SSH_OPTIONS + [host, remote_command]
+def ssh_argv(ssh_bin, host, key, remote_command, connect_timeout=DEFAULT_CONNECT_TIMEOUT):
+    return ([ssh_bin, "-i", key] + SSH_OPTIONS
+            + ["-o", "ConnectTimeout=%d" % connect_timeout, host, remote_command])
 
 
-def call_remote(runner, ssh_bin, host, key, remote_command, timeout):
+def call_remote(runner, ssh_bin, host, key, remote_command, timeout,
+                connect_timeout=DEFAULT_CONNECT_TIMEOUT):
     """(終了コード, stdout, stderr) を返す。ssh 自体の失敗は ClientError。"""
     try:
-        completed = runner(ssh_argv(ssh_bin, host, key, remote_command),
+        completed = runner(ssh_argv(ssh_bin, host, key, remote_command, connect_timeout),
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            stdin=subprocess.DEVNULL, timeout=timeout)
     except FileNotFoundError:
@@ -133,7 +162,8 @@ def parse_result(stdout):
     return result
 
 
-def collect(runner, ssh_bin, host, key, query, offset, max_results, timeout):
+def collect(runner, ssh_bin, host, key, query, offset, max_results, timeout,
+            connect_timeout=DEFAULT_CONNECT_TIMEOUT):
     """ページを順に取り、最大 max_results 件まで集める（範囲外は NAS 側で除外済み）。
 
     1回に頼む件数を「あと何件必要か」に合わせるので、取った結果を捨てることはない。
@@ -146,7 +176,8 @@ def collect(runner, ssh_bin, host, key, query, offset, max_results, timeout):
     while next_offset is not None and len(hits) < max_results and pages < MAX_PAGES:
         size = min(PAGE_SIZE, max_results - len(hits))
         code, stdout, stderr = call_remote(
-            runner, ssh_bin, host, key, search_command(query, size, next_offset), timeout)
+            runner, ssh_bin, host, key, search_command(query, size, next_offset), timeout,
+            connect_timeout)
         if code != EXIT_OK:
             return code, None, stderr
         page = parse_result(stdout)
@@ -189,7 +220,9 @@ def build_parser():
     parser.add_argument("--status", action="store_true", help="検索セッションの状態を表示")
     parser.add_argument("--host", help="接続先 user@host（既定は SYNOSEARCH_HOST）")
     parser.add_argument("--key", help="鍵ファイル（既定は SYNOSEARCH_KEY）")
-    parser.add_argument("--timeout", type=int, default=90, help="1回の呼び出しの上限秒（既定90）")
+    parser.add_argument("--timeout", type=int,
+                        help="1回の呼び出しの上限秒（既定は設定ファイルの timeout、無ければ%d）"
+                        % DEFAULT_TIMEOUT)
     parser.add_argument("--version", action="version", version="%(prog)s " + VERSION)
     return parser
 
@@ -210,7 +243,7 @@ def validate(args):
         raise ClientError("usage", "--offset は0〜100000", EXIT_USAGE)
     if args.max_results is not None and not 1 <= args.max_results <= MAX_RESULTS_CAP:
         raise ClientError("usage", "--max-results は1〜%d" % MAX_RESULTS_CAP, EXIT_USAGE)
-    if not 5 <= args.timeout <= 600:
+    if args.timeout is not None and not 5 <= args.timeout <= 600:
         raise ClientError("usage", "--timeout は5〜600", EXIT_USAGE)
 
 
@@ -223,17 +256,18 @@ def main(argv=None, environ=None, runner=None, stdout=None, stderr=None):
     try:
         args = build_parser().parse_args(argv)
         validate(args)
-        host, key = resolve_config(args, environ)
+        host, key, timeout, connect_timeout = resolve_config(args, environ)
         if args.max_results is not None:
             code, result, err = collect(runner, ssh_bin, host, key, args.query, args.offset,
-                                        args.max_results, args.timeout)
+                                        args.max_results, timeout, connect_timeout)
             if code != EXIT_OK:
                 stderr.write(err)
                 return code
             print(json.dumps(result, ensure_ascii=False), file=stdout)
             return EXIT_OK
         remote = "status" if args.status else search_command(args.query, args.limit, args.offset)
-        code, out, err = call_remote(runner, ssh_bin, host, key, remote, args.timeout)
+        code, out, err = call_remote(runner, ssh_bin, host, key, remote, timeout,
+                                     connect_timeout)
         stdout.write(out)
         stderr.write(err)
         return code

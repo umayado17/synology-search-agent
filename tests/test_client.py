@@ -178,6 +178,49 @@ class ConfigTest(ClientTestBase):
         self.assertEqual(runner.calls, [])
 
 
+class TimeoutSettingsTest(ClientTestBase):
+    def write_conf(self, text):
+        conf = os.path.join(self.tmp, "client.conf")
+        with open(conf, "w", encoding="utf-8") as handle:
+            handle.write("host = file@nas\nkey = %s\n%s" % (self.key, text))
+        return {"SYNOSEARCH_CLIENT_CONFIG": conf}
+
+    def run_with_timeout_spy(self, argv, environ):
+        seen = {}
+        runner = FakeRunner([(0, page([]), "")])
+
+        def spy(args, **kwargs):
+            seen["timeout"] = kwargs.get("timeout")
+            return runner(args, **kwargs)
+        out, err = io.StringIO(), io.StringIO()
+        code = client.main(argv, environ=environ, runner=spy, stdout=out, stderr=err)
+        return code, seen.get("timeout"), runner, err.getvalue()
+
+    def test_defaults(self):
+        code, timeout, runner, err = self.run_with_timeout_spy(["q"], self.env)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(timeout, client.DEFAULT_TIMEOUT)
+        self.assertIn("ConnectTimeout=%d" % client.DEFAULT_CONNECT_TIMEOUT, runner.calls[0])
+
+    def test_file_values_and_argument_wins(self):
+        env = self.write_conf("timeout = 200\nconnect_timeout = 5\n")
+        _, timeout, runner, _ = self.run_with_timeout_spy(["q"], env)
+        self.assertEqual(timeout, 200)
+        self.assertIn("ConnectTimeout=5", runner.calls[0])
+        _, timeout, _, _ = self.run_with_timeout_spy(["q", "--timeout", "30"], env)
+        self.assertEqual(timeout, 30)
+
+    def test_bad_lines_are_config_errors(self):
+        for text in ("timeout = 2\n", "connect_timeout = 500\n", "timeout = soon\n",
+                     "password = hunter2\n", "colour = blue\n", "just text\n"):
+            with self.subTest(text=text):
+                code, _, err, runner = self.run_client(["q"], [], environ=self.write_conf(text))
+                self.assertEqual(code, client.EXIT_USAGE)
+                self.assertEqual(json.loads(err)["error"]["type"], "config")
+                self.assertNotIn("hunter2", err)
+                self.assertEqual(runner.calls, [])
+
+
 class MaxResultsTest(ClientTestBase):
     def test_asks_only_for_what_is_still_needed(self):
         """要求件数を超えて取らない。だから切り捨てがなく、next_offset から続きが取れる。"""

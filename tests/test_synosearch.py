@@ -62,6 +62,8 @@ class FakePrompter:
         self._secrets = [password, otp]
         self.error = error
         self.asked_username = False
+        self.labels = []
+        self.notices = []
 
     def username(self):
         self.asked_username = True
@@ -69,14 +71,19 @@ class FakePrompter:
             raise self.error
         return self._username
 
+    def notice(self, text):
+        self.notices.append(text)
+
     def secret(self, label):
+        self.labels.append(label)
         if self.error:
             raise self.error
         return self._secrets.pop(0)
 
 
 LOGIN_OK = {"success": True, "data": {"sid": SID}}
-NO_SESSION_ENV = {"SYNOSEARCH_STATE_DIR": "/nonexistent/synosearch-test-state"}
+NO_SESSION_ENV = {"SYNOSEARCH_STATE_DIR": "/nonexistent/synosearch-test-state",
+                  "SYNOSEARCH_CONFIG": "/nonexistent/synosearch-test-config"}
 LOGOUT_OK = {"success": True}
 
 

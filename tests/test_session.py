@@ -127,7 +127,8 @@ class SessionIntegrationTest(unittest.TestCase):
     def setUp(self):
         self.tmp = short_tempdir()
         self.state = os.path.join(self.tmp, "state")
-        self.env = {"SYNOSEARCH_STATE_DIR": self.state}
+        self.env = {"SYNOSEARCH_STATE_DIR": self.state,
+                    "SYNOSEARCH_CONFIG": os.path.join(self.state, "none.conf")}
         self.sock = cli.socket_path_in(self.state)
         self.transport = FakeTransport({"login": LOGIN_OK, "search": mixed_response(),
                                         "logout": LOGOUT_OK})
@@ -259,7 +260,8 @@ class SessionIntegrationTest(unittest.TestCase):
 class NoSessionTest(unittest.TestCase):
     def setUp(self):
         self.tmp = short_tempdir()
-        self.env = {"SYNOSEARCH_STATE_DIR": os.path.join(self.tmp, "state")}
+        self.env = {"SYNOSEARCH_STATE_DIR": os.path.join(self.tmp, "state"),
+                    "SYNOSEARCH_CONFIG": os.path.join(self.tmp, "none.conf")}
 
     def tearDown(self):
         shutil.rmtree(self.tmp, ignore_errors=True)
@@ -288,7 +290,7 @@ class NoSessionTest(unittest.TestCase):
         for argv in (["session", "start", "--user", "u"],
                      ["session", "start", "--user", "u", "--allow-prefix", "/"],
                      ["session", "start", "--user", "u", "--allow-prefix", ALLOWED,
-                      "--max-age", "25h"],
+                      "--max-age", "91d"],
                      ["session", "start", "--user", "u", "--allow-prefix", ALLOWED,
                       "--keepalive", "5s"]):
             with self.subTest(argv=argv):
@@ -322,7 +324,8 @@ class NoSessionTest(unittest.TestCase):
         self.assertEqual(cli.parse_duration("8h"), 28800)
         self.assertEqual(cli.parse_duration("90m"), 5400)
         self.assertEqual(cli.parse_duration("0"), 0)
-        for bad in ("", "h", "1.5h", "-1m", "8d", None):
+        self.assertEqual(cli.parse_duration("7d"), 7 * 86400)
+        for bad in ("", "h", "1.5h", "-1m", "8w", None):
             self.assertIsNone(cli.parse_duration(bad), bad)
 
 

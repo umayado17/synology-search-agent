@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.5.0"
+VERSION = "0.6.0"
 SCHEMA_VERSION = 1
 
 # NAS自身へのループバック接続専用。外部ホストに書き換えて流用しないこと。
@@ -325,7 +325,7 @@ SCAN_TIME_BUDGET = 40   # 1回の検索で読み進める上限秒（入口の�
 
 
 def search_filtered(transport, sid, query, limit, offset, prefixes, checkpoints=None,
-                    clock=time.monotonic):
+                    clock=time.monotonic, max_pages=None, time_budget=None):
     """許可範囲内の結果だけでページを作る。
 
     offset と next_offset は「許可範囲内で何件目か」で数える。API の位置や範囲外の件数は
@@ -341,10 +341,12 @@ def search_filtered(transport, sid, query, limit, offset, prefixes, checkpoints=
     hits = []
     has_error = False
     more = False
+    max_pages = max_pages or MAX_SCAN_PAGES
+    time_budget = time_budget or SCAN_TIME_BUDGET
     pages = 0
     started = clock()
     while True:
-        if pages >= MAX_SCAN_PAGES or (pages and clock() - started > SCAN_TIME_BUDGET):
+        if pages >= max_pages or (pages and clock() - started > time_budget):
             more = True
             break
         data = search(transport, sid, query, SCAN_PAGE_SIZE, raw_pos)
@@ -445,13 +447,20 @@ class TtyPrompter:
         self._require_tty()
         # 端末はシーク不可のため "r+" のテキストモードでは開けない。読み書きを分けて開く。
         with open(self.tty_path, "w", encoding="utf-8") as out:
-            out.write("DSMユーザー名: ")
+            out.write("DSMユーザー名（検索に使う DSM アカウント）: ")
             out.flush()
         with open(self.tty_path, "r", encoding="utf-8") as tty:
             line = tty.readline()
         if not line:
             raise CliError("no_tty", "ユーザー名を読み取れませんでした", EXIT_NO_TTY)
         return line.strip()
+
+    def notice(self, text):
+        """入力の前に、何を入力するのかを端末に表示する。"""
+        self._require_tty()
+        with open(self.tty_path, "w", encoding="utf-8") as out:
+            out.write(text)
+            out.flush()
 
     def secret(self, label):
         self._require_tty()
@@ -461,6 +470,101 @@ class TtyPrompter:
             out.write(label)
             out.flush()
         return getpass.getpass("")
+
+
+def ask_credentials(prompter, username, purpose):
+    """どの DSM アカウントの入力かを示してから、パスワードと2段階認証コードを聞く。"""
+    shown = sanitize_text(username)
+    notice = getattr(prompter, "notice", None)
+    if notice is not None:
+        notice("\nSynology Universal Search — %s\n"
+               "DSM アカウント: %s\n"
+               "SSH のログイン用ではなく、この DSM アカウントのパスワードと"
+               "2段階認証コードを入力してください。\n" % (purpose, shown))
+    password = prompter.secret("%s の DSM パスワード: " % shown)
+    otp = prompter.secret("%s の2段階認証コード（6桁）: " % shown)
+    return password, otp
+
+
+# ---------------------------------------------------------------- 設定ファイル
+#
+# 時間などの動作パラメータだけを書く（KEY=VALUE、# はコメント）。
+# パスワード・OTP・SID などの秘密情報は書けない（読み込み時に拒否する）。
+# 優先順: コマンドライン引数 ＞ 設定ファイル ＞ 既定値。上限はコードで固定。
+
+MAX_MAX_AGE = 90 * 86400  # 90日。DSM 側のセッションがこの期間もつ保証ではない
+
+SERVER_SETTINGS = {
+    # 名前: (既定値, 種類, 最小, 最大)
+    "session_max_age": ("8h", "duration", 60, MAX_MAX_AGE),
+    "session_keepalive": ("10m", "duration", 0, MAX_MAX_AGE),
+    "http_timeout": ("45", "seconds", 1, 120),
+    "scan_time_budget": ("40", "seconds", 5, 120),
+    "scan_max_pages": ("20", "count", 1, 100),
+}
+SECRET_WORDS = ("pass", "otp", "sid", "secret", "token", "cookie", "credential")
+GATEWAY_MARGIN = 10  # 入口の待ち時間 = 走査の上限秒 + HTTPタイムアウト + この秒数
+
+
+def config_path_from(environ):
+    return (environ.get("SYNOSEARCH_CONFIG")
+            or os.path.join(os.path.expanduser("~"), ".config", "synosearch", "server.conf"))
+
+
+def human_seconds(seconds):
+    for unit, size in (("d", 86400), ("h", 3600), ("m", 60)):
+        if seconds and seconds % size == 0:
+            return "%d%s" % (seconds // size, unit)
+    return "%ds" % seconds
+
+
+def convert_setting(name, value, spec, where):
+    _, kind, low, high = spec
+    number = parse_duration(value) if kind == "duration" else (
+        int(value) if value.isdigit() else None)
+    if number is None or not low <= number <= high:
+        if kind == "duration":
+            limits = "%s〜%s（例 8h, 30m, 7d）" % (human_seconds(low) if low else "0",
+                                               human_seconds(high))
+        else:
+            limits = "%d〜%d の整数" % (low, high)
+        raise CliError("config", "%s: %s は %s" % (where, name, limits), EXIT_USAGE)
+    return number
+
+
+def load_settings(path, spec=None):
+    """設定ファイルを読み、既定値と合わせた値（秒・件数）を返す。ファイルが無ければ既定値。"""
+    spec = spec or SERVER_SETTINGS
+    values = {name: item[0] for name, item in spec.items()}
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except FileNotFoundError:
+        lines = []
+    except OSError:
+        raise CliError("config", "設定ファイルを読めません: %s" % path, EXIT_USAGE)
+    for number, line in enumerate(lines, start=1):
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        if "=" not in line:
+            raise CliError("config", "%s の %d 行目: `名前 = 値` の形で書いてください"
+                           % (path, number), EXIT_USAGE)
+        name, value = (part.strip() for part in line.split("=", 1))
+        name = name.lower()
+        if any(word in name for word in SECRET_WORDS):
+            raise CliError("config", "%s の %d 行目: 設定ファイルにパスワード・OTP・SID などは"
+                           "書けません" % (path, number), EXIT_USAGE)
+        if name not in spec:
+            raise CliError("config", "%s の %d 行目: 知らない設定名です: %s（使えるもの: %s）"
+                           % (path, number, sanitize_text(name), ", ".join(sorted(spec))),
+                           EXIT_USAGE)
+        values[name] = value
+    return {name: convert_setting(name, values[name], spec[name], path) for name in spec}
+
+
+def gateway_wait(settings):
+    return settings["scan_time_budget"] + settings["http_timeout"] + GATEWAY_MARGIN
 
 
 # ---------------------------------------------------------------- CLI
@@ -483,7 +587,8 @@ def build_parser():
     parser.add_argument("--raw", action="store_true",
                         help="APIの data をそのままJSON出力（実機の応答形式検証用）")
     parser.add_argument("--user", help="DSMユーザー名（省略時は対話入力）")
-    parser.add_argument("--timeout", type=float, default=45.0, help="HTTPタイムアウト秒（既定45）")
+    parser.add_argument("--timeout", type=float,
+                        help="HTTPタイムアウト秒（既定は設定ファイルの http_timeout、無ければ45）")
     parser.add_argument("--allow-prefix", action="append", default=[], metavar="PATH",
                         help="この共有パス（例 /archive）配下の結果だけを出す。複数指定可。"
                              "DSM の権限設定に加える多層防御")
@@ -504,7 +609,7 @@ def validate_args(parser, args):
         parser.error("--limit は1〜100")
     if args.offset < 0:
         parser.error("--offset は0以上")
-    if not (0 < args.timeout <= 600):
+    if args.timeout is not None and not (0 < args.timeout <= 600):
         parser.error("--timeout は0より大きく600以下")
     prefixes = []
     for prefix in args.allow_prefix:
@@ -545,7 +650,7 @@ def run(args, transport, prompter, stdout, stderr, socket_path):
     if wants_session(args, socket_path):
         response = broker_request(socket_path, {
             "op": "search", "query": args.query,
-            "limit": args.limit, "offset": args.offset}, args.timeout + 15)
+            "limit": args.limit, "offset": args.offset}, args.session_wait)
         result = response.get("result")
         if not isinstance(result, dict):
             raise CliError("response", "検索セッションの応答形式が想定外です", EXIT_RESPONSE)
@@ -560,8 +665,7 @@ def run(args, transport, prompter, stdout, stderr, socket_path):
     username = args.user or prompter.username()
     if not username:
         raise CliError("usage", "ユーザー名が空です", EXIT_USAGE)
-    password = prompter.secret("DSMパスワード: ")
-    otp = prompter.secret("2FA認証コード: ")
+    password, otp = ask_credentials(prompter, username, "検索")
     sid = None
     try:
         sid = login(transport, username, password, otp)
@@ -597,10 +701,7 @@ def run(args, transport, prompter, stdout, stderr, socket_path):
 # だけを受け付ける。SID はファイルにもソケット応答にも出さない。
 # 設計: docs/design-noninteractive-auth.md
 
-DEFAULT_MAX_AGE = "8h"
-MAX_MAX_AGE = 24 * 3600
-MIN_MAX_AGE = 60
-DEFAULT_KEEPALIVE = "10m"
+LONG_SESSION = 24 * 3600  # これより長いと、DSM 側で先に切れる可能性を表示する
 MAX_CONSECUTIVE_FAILURES = 3
 MAX_REQUEST_BYTES = 64 * 1024
 MAX_RESPONSE_BYTES = 16 * 1024 * 1024
@@ -626,10 +727,10 @@ def utc_text(seconds):
 
 
 def parse_duration(text):
-    """'8h' '30m' '45s' '3600' を秒に。不正なら None。"""
+    """'7d' '8h' '30m' '45s' '3600' を秒に。不正なら None。"""
     if not isinstance(text, str) or not text:
         return None
-    units = {"h": 3600, "m": 60, "s": 1}
+    units = {"d": 86400, "h": 3600, "m": 60, "s": 1}
     unit = 1
     if text[-1] in units:
         unit = units[text[-1]]
@@ -742,7 +843,7 @@ def make_logger(path):
 
 class Broker:
     def __init__(self, transport, sid, allow_prefixes, max_age, keepalive,
-                 clock=time.time, log=None):
+                 clock=time.time, log=None, scan_time_budget=None, scan_max_pages=None):
         self.transport = transport
         self._sid = sid
         self.allow_prefixes = list(allow_prefixes)
@@ -757,6 +858,8 @@ class Broker:
         self.stopping = False
         self.stop_reason = None
         self.log = log or (lambda event, **fields: None)
+        self.scan_time_budget = scan_time_budget or SCAN_TIME_BUDGET
+        self.scan_max_pages = scan_max_pages or MAX_SCAN_PAGES
         self.checkpoints = {}  # 続きのページ用。検索語 → (許可範囲内で読んだ件数, API の位置)
 
     def status(self):
@@ -810,7 +913,9 @@ class Broker:
             return error_payload(CliError("usage", "offset は0〜%d" % MAX_OFFSET, EXIT_USAGE))
         try:
             result = search_filtered(self.transport, self._sid, query, limit, offset,
-                                     self.allow_prefixes, self.checkpoints)
+                                     self.allow_prefixes, self.checkpoints,
+                                     max_pages=self.scan_max_pages,
+                                     time_budget=self.scan_time_budget)
         except CliError as exc:
             if exc.kind != "scan_limit":  # 読み進める上限に達しただけ。NAS の障害ではない
                 self._record_failure(exc)
@@ -942,11 +1047,12 @@ def build_session_parser():
     start.add_argument("--allow-prefix", action="append", default=[], metavar="PATH",
                        required=True, help="検索結果を出す共有パス（例 /archive）。必須・複数可")
     start.add_argument("--user", help="DSMユーザー名（省略時は対話入力）")
-    start.add_argument("--max-age", default=DEFAULT_MAX_AGE,
-                       help="最大寿命（例 8h, 90m。既定 8h、最大 24h）")
-    start.add_argument("--keepalive", default=DEFAULT_KEEPALIVE,
-                       help="セッション維持の検索間隔（例 10m。0で無効。既定 10m）")
-    start.add_argument("--timeout", type=float, default=45.0, help="HTTPタイムアウト秒")
+    start.add_argument("--max-age",
+                       help="有効期間（例 8h, 30m, 7d。1m〜90d。既定は設定ファイル、無ければ 8h）")
+    start.add_argument("--keepalive",
+                       help="セッション維持の検索間隔（例 10m。0で無効。既定は設定ファイル、無ければ 10m）")
+    start.add_argument("--timeout", type=float,
+                       help="HTTPタイムアウト秒（既定は設定ファイル、無ければ45）")
     start.add_argument("--foreground", action="store_true",
                        help="バックグラウンドに回らずこの端末で動かす（検証用）")
     status = sub.add_parser("status", help="セッションの状態を表示")
@@ -973,7 +1079,7 @@ def detach_and_serve(broker, listener, socket_path):
         os._exit(code)
 
 
-def session_start(args, transport, prompter, stdout, state_dir, daemonize):
+def session_start(args, transport, prompter, stdout, state_dir, daemonize, settings):
     prefixes = []
     for prefix in args.allow_prefix:
         cleaned = normalize_prefix(prefix)
@@ -981,12 +1087,18 @@ def session_start(args, transport, prompter, stdout, state_dir, daemonize):
             raise CliError("usage", "--allow-prefix は / で始まる共有パス（/ 単独や .. は不可）: %s"
                            % prefix, EXIT_USAGE)
         prefixes.append(cleaned)
-    max_age = parse_duration(args.max_age)
-    if max_age is None or not MIN_MAX_AGE <= max_age <= MAX_MAX_AGE:
-        raise CliError("usage", "--max-age は 1m〜24h", EXIT_USAGE)
-    keepalive = parse_duration(args.keepalive)
+    max_age = settings["session_max_age"]
+    if args.max_age is not None:
+        max_age = convert_setting("--max-age", args.max_age,
+                                  SERVER_SETTINGS["session_max_age"], "引数")
+    keepalive = settings["session_keepalive"]
+    if args.keepalive is not None:
+        keepalive = parse_duration(args.keepalive)
     if keepalive is None or (keepalive != 0 and not 60 <= keepalive <= max_age):
-        raise CliError("usage", "--keepalive は 0 または 1m〜max-age", EXIT_USAGE)
+        raise CliError("usage", "keepalive は 0 または 1m〜有効期間", EXIT_USAGE)
+    http_timeout = args.timeout if args.timeout is not None else settings["http_timeout"]
+    if not 0 < http_timeout <= 120:
+        raise CliError("usage", "--timeout は0より大きく120以下", EXIT_USAGE)
 
     ensure_private_dir(state_dir)
     socket_path = socket_path_in(state_dir)
@@ -995,12 +1107,11 @@ def session_start(args, transport, prompter, stdout, state_dir, daemonize):
                        "検索セッションはすでに動いています（synosearch session status）",
                        EXIT_SESSION_STATE)
 
-    transport = transport or HttpTransport(args.timeout)
+    transport = transport or HttpTransport(http_timeout)
     username = args.user or prompter.username()
     if not username:
         raise CliError("usage", "ユーザー名が空です", EXIT_USAGE)
-    password = prompter.secret("DSMパスワード: ")
-    otp = prompter.secret("2FA認証コード: ")
+    password, otp = ask_credentials(prompter, username, "検索セッションの開始")
     try:
         sid = login(transport, username, password, otp)
     finally:
@@ -1011,10 +1122,16 @@ def session_start(args, transport, prompter, stdout, state_dir, daemonize):
         logout(transport, sid)
         raise
     broker = Broker(transport, sid, prefixes, max_age, keepalive,
-                    log=make_logger(os.path.join(state_dir, LOG_NAME)))
+                    log=make_logger(os.path.join(state_dir, LOG_NAME)),
+                    scan_time_budget=settings["scan_time_budget"],
+                    scan_max_pages=settings["scan_max_pages"])
     sid = None
     print("検索セッションを開始しました。期限: %s（UTC）／対象: %s"
           % (utc_text(broker.expires_at), ", ".join(prefixes)), file=stdout)
+    if max_age > LONG_SESSION:
+        print("注意: DSM 側のログインがこの期間もつかは確認されていません。"
+              "DSM 側で先に切れた場合、検索が3回続けて失敗した時点でセッションを終了します。",
+              file=stdout)
     if hasattr(stdout, "flush"):
         stdout.flush()
     if not daemonize or args.foreground:
@@ -1026,7 +1143,8 @@ def session_start(args, transport, prompter, stdout, state_dir, daemonize):
     return EXIT_OK
 
 
-def session_main(argv, transport, prompter, stdout, stderr, state_dir, daemonize):
+def session_main(argv, transport, prompter, stdout, stderr, state_dir, daemonize,
+                 config_path):
     parser = build_session_parser()
     args = parser.parse_args(argv)
     as_json = getattr(args, "json", False)
@@ -1034,7 +1152,7 @@ def session_main(argv, transport, prompter, stdout, stderr, state_dir, daemonize
     try:
         if args.action == "start":
             return session_start(args, transport, prompter or TtyPrompter(), stdout,
-                                 state_dir, daemonize)
+                                 state_dir, daemonize, load_settings(config_path))
         if args.action == "status":
             status = broker_request(socket_path, {"op": "status"}, 15)["status"]
             if as_json:
@@ -1099,10 +1217,11 @@ def parse_gateway_command(command):
     return "search", {"query": args.query, "limit": args.limit, "offset": args.offset}
 
 
-def gateway_main(command, state_dir, stdout, stderr):
+def gateway_main(command, state_dir, stdout, stderr, config_path):
     socket_path = socket_path_in(state_dir)
     try:
         op, params = parse_gateway_command(command)
+        wait = gateway_wait(load_settings(config_path))
         if op == "status":
             status = broker_request(socket_path, {"op": "status"}, 15)["status"]
             print(json.dumps({"schema_version": SCHEMA_VERSION, "session": status},
@@ -1110,7 +1229,7 @@ def gateway_main(command, state_dir, stdout, stderr):
             return EXIT_OK
         request = {"op": "search"}
         request.update(params)
-        result = broker_request(socket_path, request, 75).get("result")
+        result = broker_request(socket_path, request, wait).get("result")
         if not isinstance(result, dict):
             raise CliError("response", "検索セッションの応答形式が想定外です", EXIT_RESPONSE)
         print(json.dumps(result, ensure_ascii=False), file=stdout)
@@ -1133,18 +1252,25 @@ def main(argv=None, transport=None, prompter=None, stdout=None, stderr=None,
     argv = list(sys.argv[1:] if argv is None else argv)
     environ = os.environ if environ is None else environ
     state_dir = state_dir_from(environ)
+    config_path = config_path_from(environ)
     if argv == ["--agent-gateway"]:
-        return gateway_main(environ.get("SSH_ORIGINAL_COMMAND", ""), state_dir, stdout, stderr)
+        return gateway_main(environ.get("SSH_ORIGINAL_COMMAND", ""), state_dir, stdout, stderr,
+                            config_path)
     if argv[:1] == ["session"]:
-        return session_main(argv[1:], transport, prompter, stdout, stderr, state_dir, daemonize)
+        return session_main(argv[1:], transport, prompter, stdout, stderr, state_dir, daemonize,
+                            config_path)
 
     parser = build_parser()
     args = parser.parse_args(argv)
     validate_args(parser, args)
     as_json = args.json or args.raw or args.check_api
-    transport = transport or HttpTransport(args.timeout)
     prompter = prompter or TtyPrompter()
     try:
+        settings = load_settings(config_path)
+        if args.timeout is None:
+            args.timeout = settings["http_timeout"]
+        args.session_wait = gateway_wait(settings)
+        transport = transport or HttpTransport(args.timeout)
         return run(args, transport, prompter, stdout, stderr, socket_path_in(state_dir))
     except CliError as exc:
         emit_error(exc, as_json, stderr)

@@ -1,4 +1,4 @@
-# synosearch CLI 仕様（v0.5.0 / JSON schema_version 1）
+# synosearch CLI 仕様（v0.6.0 / JSON schema_version 1）
 
 この文書が CLI の外部契約です。変更時は `tests/test_synosearch.py` を同時に更新してください。
 
@@ -7,7 +7,7 @@
 ```
 synosearch QUERY [--limit N] [--offset N] [--json | --raw] [--user NAME] [--timeout SEC] [--allow-prefix PATH ...]
 synosearch --check-api
-synosearch session start --allow-prefix PATH [--user NAME] [--max-age 8h] [--keepalive 10m] [--foreground]
+synosearch session start --allow-prefix PATH [--user NAME] [--max-age 8h] [--keepalive 10m] [--timeout SEC] [--foreground]
 synosearch session status [--json]
 synosearch session stop
 synosearch --agent-gateway        # authorized_keys の command= 専用。SSH_ORIGINAL_COMMAND を解釈
@@ -22,12 +22,12 @@ synosearch --version | --help
 | `--json` | off | 正規化済みJSONを stdout へ1行で出力 |
 | `--raw` | off | APIの `data` を無加工で出力。**実機の応答形式検証用**で、形式は保証しない |
 | `--user` | 対話入力 | DSMユーザー名。パスワードとOTPは常に対話入力 |
-| `--timeout` | 45 | HTTPタイムアウト秒（0 < x ≤ 600） |
+| `--timeout` | 設定ファイル、無ければ 45 | HTTPタイムアウト秒（0 < x ≤ 600） |
 | `--allow-prefix` | なし | `/共有名[/サブパス]`。この配下（`share_path` が一致または `PATH/` で始まる）の結果だけを出す。複数指定可。`/` 単独・`..` を含むものは引数エラー。`--raw` とは併用不可。DSM の権限設定に重ねる多層防御 |
 | `--no-session` | off | 検索セッションが動いていても使わず、対話ログインで検索 |
 | `--check-api` | – | 認証なしで `SYNO.API.Info` を照会し、必要APIの有無・バージョン範囲をJSONで出力 |
 
-パスワード・OTP は **`/dev/tty` からのみ**読みます。引数・環境変数・stdin からは受け付けません。
+パスワード・OTP は **`/dev/tty` からのみ**読みます。聞く前に、どの DSM アカウントの入力かを表示します（例 `search-agent の DSM パスワード:`）。SSH のログインに使うアカウントと区別するためです。引数・環境変数・stdin からは受け付けません。
 TTY が無い場合（例: `ssh host synosearch ...`）は通信を一切行わず終了コード 7 で終了します。
 
 ## stdout（成功時）
@@ -117,13 +117,40 @@ TTY が無い場合（例: `ssh host synosearch ...`）は通信を一切行わ�
 
 本人が TTY で一度ログインし、期限までの間「検索」だけを受け付ける待機役を動かします。設計は `docs/design-noninteractive-auth.md`、導入は `docs/agent-setup.md`。
 
-- `session start`: ユーザー名・パスワード・OTP を TTY から読みログイン → バックグラウンドに回る（`--foreground` で前面実行）。`--allow-prefix` は必須で、結果は常にこの範囲に絞られる。`--max-age` は 1m〜24h（既定 8h）、`--keepalive` は 0 または 1m〜max-age（既定 10m、`keepalive` という語で1件検索してセッションを保つ）
+- `session start`: ユーザー名・パスワード・OTP を TTY から読みログイン → バックグラウンドに回る（`--foreground` で前面実行）。`--allow-prefix` は必須で、結果は常にこの範囲に絞られる。`--max-age` は 1m〜90d（既定 8h）、`--keepalive` は 0 または 1m〜max-age（既定 10m、`keepalive` という語で1件検索してセッションを保つ）。既定値は設定ファイルで変えられる。24時間を超える期間では、DSM 側で先に切れる可能性を表示する（DSM 側のログインがその期間もつかは未確認。切れた場合は検索・keepalive が3回続けて失敗した時点で終了する）
 - 状態は `~/.synosearch/`（0700）。`broker.sock`（0600）と `broker.log`（0600）。`SYNOSEARCH_STATE_DIR` で変更可
 - SID はプロセスのメモリにだけ置き、ファイル・ログ・応答に出さない。ログに検索語は書かない（イベント名と件数のみ）
 - Linux では接続元の UID を `SO_PEERCRED` で確認し、同じユーザー以外を拒否
 - 期限到来・`session stop`・SIGTERM・DSM 呼び出しの3回連続失敗で、ログアウトしてソケットを消して終了（`scan_limit` は失敗に数えない）
 - セッション中、`synosearch QUERY` はパスワードを聞かずにセッションを使う（`--no-session`・`--raw`・`--user` 指定時は対話）。クライアントの `--allow-prefix` は範囲を狭めることしかできない
 - `session status` の JSON: `{"schema_version":1,"session":{"started_utc","expires_utc","remaining_seconds","allow_prefixes","searches","consecutive_failures","last_error"}}`
+
+## 設定ファイル（NAS 側、v0.6.0）
+
+`~/.config/synosearch/server.conf`（環境変数 `SYNOSEARCH_CONFIG` で変更可）。無くても既定値で動きます。形式は `名前 = 値`、`#` から始まる行はコメントです。
+
+```
+# 例
+session_max_age = 7d
+session_keepalive = 10m
+http_timeout = 45
+scan_time_budget = 40
+scan_max_pages = 20
+```
+
+| 名前 | 既定 | 範囲（コードで固定） | 意味 |
+|---|---|---|---|
+| `session_max_age` | 8h | 1m〜90d | 検索セッションの有効期間（`--max-age` の既定値） |
+| `session_keepalive` | 10m | 0 または 1m〜有効期間 | セッションを保つ検索の間隔（`--keepalive` の既定値） |
+| `http_timeout` | 45 | 1〜120 秒 | DSM API 1回の待ち時間（`--timeout` の既定値） |
+| `scan_time_budget` | 40 | 5〜120 秒 | 範囲を絞るとき、1回の検索で読み進める時間の上限 |
+| `scan_max_pages` | 20 | 1〜100 | 同じく、1回の検索で API を呼ぶ回数の上限（1回100件） |
+
+- 優先順: コマンドライン引数 ＞ 設定ファイル ＞ 既定値
+- 入口（`--agent-gateway`）の待ち時間は `scan_time_budget + http_timeout + 10` 秒で自動で決まります（既定 95 秒）。エージェント側の待ち時間（`nas-search` の `timeout`、既定 120 秒）はこれより長くしてください
+- 範囲外の値・知らない名前・書式の誤りは終了コード 2（`type: config`）。パスワード・OTP・SID・トークンなどを表す名前は書けません（拒否します）
+- 設定を変えたら、検索セッションを始め直してください（動いているセッションは開始時の値のまま）
+- 応答サイズの上限（16MB）、検索語の長さ（1000文字）、offset の上限（100000）などはコードで固定です
 
 ## AIエージェント用の入口（`--agent-gateway`）
 
@@ -138,12 +165,13 @@ status                                        → stdout に {"schema_version":1
 - それ以外（`--raw`・`--allow-prefix`・`--user`・`stop`・未知の語・`;` など）はすべて終了コード 2
 - エラーは stderr に JSON 1行。セッションが無ければ終了コード 8（`session_required`）。資格情報の入力は求めない
 
-## エージェント側コマンド `clients/nas-search`（v0.2.0）
+## エージェント側コマンド `clients/nas-search`（v0.3.0）
 
 入口（`--agent-gateway`）を ssh で呼ぶ薄いラッパー。出力・終了コードは入口と同じで、加えて:
 
 - `--max-results N`（1〜1000）: ページを送り、最大 N 件を1つの JSON にまとめる（`pages_fetched` を追加、最大20ページ）。1回に頼む件数は `min(100, 残り件数)` なので、取った結果を捨てない。最後の `next_offset` から続きを取れる
 - `--status` は検索語・`--max-results`・`--offset` と併用できない（exit 2）
 - 設定: `--host`/`--key` > 環境変数 `SYNOSEARCH_HOST`/`SYNOSEARCH_KEY` > `~/.config/synosearch/client.conf`（`SYNOSEARCH_CLIENT_CONFIG` で変更可）。未設定は exit 2（`type: config`）
+- `client.conf` に書ける名前: `host`、`key`、`timeout`（1回の呼び出しの上限秒、5〜600、既定 120。`--timeout` が優先）、`connect_timeout`（ssh の接続待ち秒、1〜120、既定 15）。知らない名前・パスワードなどは exit 2
 - ssh 自体の失敗（ssh の終了コード 255）は exit 5（`type: ssh`）。パスワード認証は試さない
 - 送る文字列は `search --limit N --offset N -- <shlex.quote(検索語)>`
