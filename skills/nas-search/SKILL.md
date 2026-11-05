@@ -73,4 +73,4 @@ host=<ssh-user>@<nas-host>
 key=~/.ssh/synosearch_agent
 ```
 
-未設定だと終了コード 2（`type: config`）になります。待ち時間は `timeout=`（秒、既定 120）で変えられます。
+未設定だと終了コード 2（`type: config`）になります。待ち時間は `timeout=`（秒、既定 260）で変えられます。

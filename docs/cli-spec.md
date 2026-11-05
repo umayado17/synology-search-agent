@@ -149,7 +149,7 @@ scan_max_pages = 20
 - 優先順: コマンドライン引数 ＞ 設定ファイル ＞ 既定値
 - 1回の検索の最長は、検索セッションを始めたときの値で `scan_time_budget + http_timeout + 10` 秒です（既定 95 秒）。`session start` が開始時に表示します。`--timeout` で `http_timeout` を上書きした場合は、その値で計算します
 - 入口（`--agent-gateway`）は設定ファイルを読みません。検索セッションの応答を、設定でとれる最大値から決めた 250 秒（120 + 120 + 10）まで待ちます。`--timeout` の上書きや開始後の設定の書き換えで、入口が先に待ちをやめることはありません
-- エージェント側の待ち時間（`nas-search` の `timeout`、既定 120 秒）は、開始時に表示された最長の秒数より長くしてください
+- エージェント側の待ち時間（`nas-search` の `timeout`）の既定は 260 秒で、入口の 250 秒より長くしてあります。NAS 側の設定だけを変えても、エージェント側が先に切ることはありません。短くする場合は、開始時に表示された最長の秒数より長くしてください
 - 範囲外の値・知らない名前・書式の誤りは終了コード 2（`type: config`）。パスワード・OTP・SID・トークンなどを表す名前は書けません（拒否します）
 - 設定を変えたら、検索セッションを始め直してください（動いているセッションは開始時の値のまま）
 - 応答サイズの上限（16MB）、検索語の長さ（1000文字）、offset の上限（100000）などはコードで固定です
@@ -167,13 +167,13 @@ status                                        → stdout に {"schema_version":1
 - それ以外（`--raw`・`--allow-prefix`・`--user`・`stop`・未知の語・`;` など）はすべて終了コード 2
 - エラーは stderr に JSON 1行。セッションが無ければ終了コード 8（`session_required`）。資格情報の入力は求めない
 
-## エージェント側コマンド `clients/nas-search`（v0.3.0）
+## エージェント側コマンド `clients/nas-search`（v0.3.1）
 
 入口（`--agent-gateway`）を ssh で呼ぶ薄いラッパー。出力・終了コードは入口と同じで、加えて:
 
 - `--max-results N`（1〜1000）: ページを送り、最大 N 件を1つの JSON にまとめる（`pages_fetched` を追加、最大20ページ）。1回に頼む件数は `min(100, 残り件数)` なので、取った結果を捨てない。最後の `next_offset` から続きを取れる
 - `--status` は検索語・`--max-results`・`--offset` と併用できない（exit 2）
 - 設定: `--host`/`--key` > 環境変数 `SYNOSEARCH_HOST`/`SYNOSEARCH_KEY` > `~/.config/synosearch/client.conf`（`SYNOSEARCH_CLIENT_CONFIG` で変更可）。未設定は exit 2（`type: config`）
-- `client.conf` に書ける名前: `host`、`key`、`timeout`（1回の呼び出しの上限秒、5〜600、既定 120。`--timeout` が優先）、`connect_timeout`（ssh の接続待ち秒、1〜120、既定 15）。知らない名前・パスワードなどは exit 2
+- `client.conf` に書ける名前: `host`、`key`、`timeout`（1回の呼び出しの上限秒、5〜600、既定 260。`--timeout` が優先）、`connect_timeout`（ssh の接続待ち秒、1〜120、既定 15）。知らない名前・パスワードなどは exit 2
 - ssh 自体の失敗（ssh の終了コード 255）は exit 5（`type: ssh`）。パスワード認証は試さない
 - 送る文字列は `search --limit N --offset N -- <shlex.quote(検索語)>`

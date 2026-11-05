@@ -200,6 +200,8 @@ class TimeoutSettingsTest(ClientTestBase):
         code, timeout, runner, err = self.run_with_timeout_spy(["q"], self.env)
         self.assertEqual(code, 0, err)
         self.assertEqual(timeout, client.DEFAULT_TIMEOUT)
+        self.assertGreater(client.DEFAULT_TIMEOUT, cli.gateway_wait(),
+                           "NAS 側の設定を変えても、クライアントが先に切らない")
         self.assertIn("ConnectTimeout=%d" % client.DEFAULT_CONNECT_TIMEOUT, runner.calls[0])
 
     def test_file_values_and_argument_wins(self):

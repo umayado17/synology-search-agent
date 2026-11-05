@@ -16,7 +16,7 @@ import shlex
 import subprocess
 import sys
 
-VERSION = "0.3.0"
+VERSION = "0.3.1"
 SCHEMA_VERSION = 1
 
 EXIT_OK = 0
@@ -38,7 +38,7 @@ SSH_OPTIONS = [
     "-o", "LogLevel=ERROR",
     "-T",
 ]
-DEFAULT_TIMEOUT = 120         # NAS 側の1回の検索の最長（既定 95 秒）より長く
+DEFAULT_TIMEOUT = 260         # NAS 側の入口が待つ最長 250 秒より長く（NAS の設定によらず先に切らない）
 DEFAULT_CONNECT_TIMEOUT = 15
 CONFIG_KEYS = ("host", "key", "timeout", "connect_timeout")
 SECRET_WORDS = ("pass", "otp", "sid", "secret", "token", "cookie", "credential")

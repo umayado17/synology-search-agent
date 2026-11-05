@@ -87,11 +87,11 @@ ssh -i ~/.ssh/synosearch_agent -o IdentitiesOnly=yes <ssh-user>@<nas-host> statu
 ```bash
 mkdir -p ~/.local/bin ~/.config/synosearch
 cp clients/nas-search ~/.local/bin/nas-search && chmod 755 ~/.local/bin/nas-search
-printf 'host=<ssh-user>@<nas-host>\nkey=~/.ssh/synosearch_agent\n# timeout=120\n' > ~/.config/synosearch/client.conf
+printf 'host=<ssh-user>@<nas-host>\nkey=~/.ssh/synosearch_agent\n# timeout=260\n' > ~/.config/synosearch/client.conf
 chmod 600 ~/.config/synosearch/client.conf
 ```
 
-`timeout` は、`session start` が表示する「1回の検索は最長 N 秒」より長くしてください（既定の設定なら 95 秒なので、120 のままで足ります）。
+`timeout` の既定は 260 秒です。NAS 側の入口が待つ最長（250 秒）より長いので、NAS の設定を変えても既定のままで足ります。短くする場合は、`session start` が表示する「1回の検索は最長 N 秒」より長くしてください。
 
 確認:
 
