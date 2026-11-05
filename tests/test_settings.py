@@ -29,7 +29,6 @@ class SettingsFileTest(unittest.TestCase):
         self.assertEqual(settings, {"session_max_age": 8 * 3600, "session_keepalive": 600,
                                     "http_timeout": 45, "scan_time_budget": 40,
                                     "scan_max_pages": 20})
-        self.assertEqual(cli.gateway_wait(settings), 40 + 45 + cli.GATEWAY_MARGIN)
 
     def test_file_values_and_comments(self):
         self.write("# 長めに使う\nsession_max_age = 7d\nSESSION_KEEPALIVE=5m\n\n"
@@ -38,7 +37,7 @@ class SettingsFileTest(unittest.TestCase):
         self.assertEqual(settings["session_max_age"], 7 * 86400)
         self.assertEqual(settings["session_keepalive"], 300)
         self.assertEqual(settings["scan_max_pages"], 50)
-        self.assertEqual(cli.gateway_wait(settings), 60 + 30 + cli.GATEWAY_MARGIN)
+        self.assertEqual((settings["scan_time_budget"], settings["http_timeout"]), (60, 30))
 
     def test_hard_limits_cannot_be_exceeded(self):
         for line in ("session_max_age = 91d", "session_max_age = 30s", "http_timeout = 121",
@@ -71,12 +70,12 @@ class SettingsFileTest(unittest.TestCase):
         self.assertTrue(cli.config_path_from({}).endswith(
             os.path.join(".config", "synosearch", "server.conf")))
 
-    def test_bad_config_is_json_error_at_gateway(self):
+    def test_bad_config_is_json_error_for_interactive_search(self):
         self.write("password = hunter2\n")
         out, err = io.StringIO(), io.StringIO()
-        code = cli.main(["--agent-gateway"], stdout=out, stderr=err, environ={
-            "SYNOSEARCH_STATE_DIR": os.path.join(self.tmp, "state"),
-            "SYNOSEARCH_CONFIG": self.path, "SSH_ORIGINAL_COMMAND": "search test"})
+        code = cli.main(["test", "--json"], prompter=FakePrompter(), stdout=out, stderr=err,
+                        environ={"SYNOSEARCH_STATE_DIR": os.path.join(self.tmp, "state"),
+                                 "SYNOSEARCH_CONFIG": self.path})
         self.assertEqual(code, cli.EXIT_USAGE)
         self.assertIn('"config"', err.getvalue())
         self.assertNotIn("hunter2", err.getvalue())
@@ -97,6 +96,37 @@ class SettingsFileTest(unittest.TestCase):
             cli.main(["--check-api", "--json", "--timeout", "7"], stdout=io.StringIO(),
                      stderr=io.StringIO(), environ=env)
         self.assertEqual(seen, [30, 7])
+
+
+class GatewayWaitTest(unittest.TestCase):
+    """入口の待ち時間が、検索セッションでありうる最長の検索より長いこと。"""
+
+    def test_wait_covers_the_largest_allowed_settings(self):
+        longest = cli.search_time_limit(cli.SERVER_SETTINGS["scan_time_budget"][3],
+                                        cli.SERVER_SETTINGS["http_timeout"][3])
+        self.assertGreaterEqual(cli.gateway_wait(), longest)
+        # session start --timeout 120 で、設定ファイルは既定のまま（レビューで指摘された例）
+        self.assertGreater(cli.gateway_wait(), cli.search_time_limit(40, 120))
+
+    def test_gateway_does_not_take_the_wait_from_the_config_file(self):
+        tmp = tempfile.mkdtemp(prefix="sgw-")
+        self.addCleanup(shutil.rmtree, tmp, True)
+        conf = os.path.join(tmp, "server.conf")
+        with open(conf, "w", encoding="utf-8") as handle:
+            handle.write("http_timeout = 1\nscan_time_budget = 5\n")  # 開始後に小さく書き換えた
+        waits = []
+
+        def fake_request(socket_path, request, timeout):
+            waits.append(timeout)
+            return {"ok": True, "result": {"hits": []}}
+        for config in (conf, os.path.join(tmp, "missing.conf")):
+            with unittest.mock.patch.object(cli, "broker_request", fake_request):
+                code = cli.main(["--agent-gateway"], stdout=io.StringIO(), stderr=io.StringIO(),
+                                environ={"SYNOSEARCH_STATE_DIR": os.path.join(tmp, "state"),
+                                         "SYNOSEARCH_CONFIG": config,
+                                         "SSH_ORIGINAL_COMMAND": "search test"})
+            self.assertEqual(code, cli.EXIT_OK)
+        self.assertEqual(waits, [cli.gateway_wait()] * 2)
 
 
 class SessionStartSettingsTest(unittest.TestCase):
@@ -148,6 +178,12 @@ class SessionStartSettingsTest(unittest.TestCase):
         self.assertIn("DSM 側のログインがこの期間もつかは確認されていません", out)
         broker, _, _ = self.start(["--max-age", "2h", "--keepalive", "0"], conf)
         self.assertEqual((self.lifetime(broker), broker.keepalive), (2 * 3600, 0))
+
+    def test_start_message_shows_the_longest_search(self):
+        _, _, out = self.start([])
+        self.assertIn("1回の検索は最長 95 秒", out)
+        _, _, out = self.start(["--timeout", "120"], "scan_time_budget = 60\n")
+        self.assertIn("1回の検索は最長 190 秒", out)
 
     def test_ninety_days_by_argument(self):
         broker, _, _ = self.start(["--max-age", "90d"])

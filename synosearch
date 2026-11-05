@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.6.0"
+VERSION = "0.6.1"
 SCHEMA_VERSION = 1
 
 # NAS自身へのループバック接続専用。外部ホストに書き換えて流用しないこと。
@@ -321,7 +321,7 @@ def build_result(query, limit, offset, data):
 SCAN_PAGE_SIZE = 100    # 絞り込み時に API から1回で読む件数
 MAX_SCAN_PAGES = 20     # 1回の検索で読む上限（2,000件）
 SCAN_CACHE_SIZE = 32    # 続きのページ用に覚えておく検索語の数
-SCAN_TIME_BUDGET = 40   # 1回の検索で読み進める上限秒（入口の待ち時間 75 秒より短く）
+SCAN_TIME_BUDGET = 40   # 1回の検索で読み進める上限秒
 
 
 def search_filtered(transport, sid, query, limit, offset, prefixes, checkpoints=None,
@@ -503,7 +503,7 @@ SERVER_SETTINGS = {
     "scan_max_pages": ("20", "count", 1, 100),
 }
 SECRET_WORDS = ("pass", "otp", "sid", "secret", "token", "cookie", "credential")
-GATEWAY_MARGIN = 10  # 入口の待ち時間 = 走査の上限秒 + HTTPタイムアウト + この秒数
+GATEWAY_MARGIN = 10  # 1回の検索の最長 = 走査の上限秒 + HTTPタイムアウト + この秒数
 
 
 def config_path_from(environ):
@@ -563,8 +563,23 @@ def load_settings(path, spec=None):
     return {name: convert_setting(name, values[name], spec[name], path) for name in spec}
 
 
-def gateway_wait(settings):
-    return settings["scan_time_budget"] + settings["http_timeout"] + GATEWAY_MARGIN
+def search_time_limit(scan_time_budget, http_timeout):
+    """検索セッションで1回の検索にかかる最長の秒数。
+
+    読み進めるのは scan_time_budget 秒までで、最後に始めた API 呼び出しも http_timeout 秒で
+    打ち切られるので、これを超えない。
+    """
+    return scan_time_budget + http_timeout + GATEWAY_MARGIN
+
+
+def gateway_wait():
+    """入口が検索セッションの応答を待つ秒数。
+
+    検索セッションの実際の値（session start の --timeout や、開始後に書き換えた設定ファイル）
+    に左右されないよう、設定でとれる最大値から決める。
+    """
+    return search_time_limit(SERVER_SETTINGS["scan_time_budget"][3],
+                             SERVER_SETTINGS["http_timeout"][3])
 
 
 # ---------------------------------------------------------------- CLI
@@ -1128,6 +1143,9 @@ def session_start(args, transport, prompter, stdout, state_dir, daemonize, setti
     sid = None
     print("検索セッションを開始しました。期限: %s（UTC）／対象: %s"
           % (utc_text(broker.expires_at), ", ".join(prefixes)), file=stdout)
+    print("1回の検索は最長 %d 秒です。エージェント側の待ち時間（nas-search の timeout）は"
+          "これより長くしてください。"
+          % search_time_limit(broker.scan_time_budget, http_timeout), file=stdout)
     if max_age > LONG_SESSION:
         print("注意: DSM 側のログインがこの期間もつかは確認されていません。"
               "DSM 側で先に切れた場合、検索が3回続けて失敗した時点でセッションを終了します。",
@@ -1217,11 +1235,12 @@ def parse_gateway_command(command):
     return "search", {"query": args.query, "limit": args.limit, "offset": args.offset}
 
 
-def gateway_main(command, state_dir, stdout, stderr, config_path):
+def gateway_main(command, state_dir, stdout, stderr):
+    # 設定ファイルは読まない。待ち時間は gateway_wait() の固定値で、検索の中身は検索セッションが決める
     socket_path = socket_path_in(state_dir)
     try:
         op, params = parse_gateway_command(command)
-        wait = gateway_wait(load_settings(config_path))
+        wait = gateway_wait()
         if op == "status":
             status = broker_request(socket_path, {"op": "status"}, 15)["status"]
             print(json.dumps({"schema_version": SCHEMA_VERSION, "session": status},
@@ -1254,8 +1273,7 @@ def main(argv=None, transport=None, prompter=None, stdout=None, stderr=None,
     state_dir = state_dir_from(environ)
     config_path = config_path_from(environ)
     if argv == ["--agent-gateway"]:
-        return gateway_main(environ.get("SSH_ORIGINAL_COMMAND", ""), state_dir, stdout, stderr,
-                            config_path)
+        return gateway_main(environ.get("SSH_ORIGINAL_COMMAND", ""), state_dir, stdout, stderr)
     if argv[:1] == ["session"]:
         return session_main(argv[1:], transport, prompter, stdout, stderr, state_dir, daemonize,
                             config_path)
@@ -1269,7 +1287,7 @@ def main(argv=None, transport=None, prompter=None, stdout=None, stderr=None,
         settings = load_settings(config_path)
         if args.timeout is None:
             args.timeout = settings["http_timeout"]
-        args.session_wait = gateway_wait(settings)
+        args.session_wait = gateway_wait()
         transport = transport or HttpTransport(args.timeout)
         return run(args, transport, prompter, stdout, stderr, socket_path_in(state_dir))
     except CliError as exc:

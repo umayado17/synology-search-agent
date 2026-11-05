@@ -91,6 +91,8 @@ printf 'host=<ssh-user>@<nas-host>\nkey=~/.ssh/synosearch_agent\n# timeout=120\n
 chmod 600 ~/.config/synosearch/client.conf
 ```
 
+`timeout` は、`session start` が表示する「1回の検索は最長 N 秒」より長くしてください（既定の設定なら 95 秒なので、120 のままで足ります）。
+
 確認:
 
 ```bash

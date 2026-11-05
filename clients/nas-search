@@ -38,7 +38,7 @@ SSH_OPTIONS = [
     "-o", "LogLevel=ERROR",
     "-T",
 ]
-DEFAULT_TIMEOUT = 120         # NAS 側の入口の待ち時間（既定 95 秒）より長く
+DEFAULT_TIMEOUT = 120         # NAS 側の1回の検索の最長（既定 95 秒）より長く
 DEFAULT_CONNECT_TIMEOUT = 15
 CONFIG_KEYS = ("host", "key", "timeout", "connect_timeout")
 SECRET_WORDS = ("pass", "otp", "sid", "secret", "token", "cookie", "credential")
