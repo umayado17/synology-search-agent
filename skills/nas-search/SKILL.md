@@ -41,7 +41,8 @@ nas-search --status                          # 検索セッションの状態（
 
 - `share_path` をユーザーへの説明に使う（`path` は NAS 内部の絶対パス）
 - `total` は常に `null`（範囲外の件数を漏らさないため）。続きがあるかは `next_offset` が `null` でないかで判断
-- `offset`・`next_offset` は許可範囲内での件数。`next_offset` をそのまま次の `--offset` に使えば、抜けも重複もない
+- `offset`・`next_offset` は許可範囲内での件数。`next_offset` をそのまま次の `--offset` に使えば、索引が変わらない間は抜けも重複もない
+- ページの間に NAS の索引が更新されると、同じファイルが2回出たり、1件飛んだりすることがある。複数ページを合わせるときは `share_path` で重複を除く
 - `--max-results` の結果も、最後の `next_offset` から続きを取れる
 - `modified` は UNIX 秒、`modified_utc` は UTC。日本時間で伝えるときは +9 時間
 

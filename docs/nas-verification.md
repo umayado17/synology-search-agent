@@ -68,6 +68,93 @@ scripts/remote-run.sh -t <nas-host> test --limit 3 --raw > raw-test.json
 
 コード値は DSM 側の前提で変わり得るため、観測値をそのまま記録し原因は断定しないこと。
 
+## 6. v0.7.0 リリース候補の確認
+
+v0.4.0 の後に変えたところ（ページ送り、設定ファイル、待ち時間、名前の変更）を、導入した形で確かめます。手順は [agent-setup.md](agent-setup.md) で導入した後に行います。パスワードと2段階認証のコードは、本人が入力します。
+
+ここで使う検索語・件数・パスは、記録するときに伏せ字にします。結果を保存したファイル（`page*.json` など）はコミットしません。
+
+### 6-1. 導入と移行
+
+| 確認 | 期待 |
+|---|---|
+| `~/.local/bin/unisearch --version` | `unisearch 0.7.0` |
+| `nas-search --version`（エージェント側） | `nas-search 0.4.0` |
+| `~/.local/bin/unisearch --check-api` | `"ok": true`、exit 0 |
+| 古い名前からの移行（[agent-setup.md](agent-setup.md#古い名前synosearchから移るとき)） | `authorized_keys` の `command=` が `unisearch` を指し、古い `synosearch` を呼べない |
+| `session start` の表示 | パスワードと2段階認証の入力欄に DSM アカウント名が出る。「1回の検索は最長 95 秒」と出る（既定の設定のとき） |
+| `nas-search --status` | exit 0。`remaining_seconds` が有効期間に合う |
+
+### 6-2. 権限の分離（新しい版で）
+
+検索専用アカウントで始めた検索セッションで、次を確かめます。
+
+- 許可していない共有フォルダの中のファイル名で検索して、0件になる
+- 許可したフォルダのファイルは見つかる
+- [verification.md](verification.md) の「検索セッションと SSH 入口」で断られたコマンド（`ls`、`search test; ls`、`--allow-prefix` 付き、ポート転送など）が、新しい版でも exit 2 などで断られる
+
+### 6-3. ページ送り（索引が変わらないとき）
+
+結果が数百件ある検索語を選びます。索引の状態が「Finished」で、検索の間にファイルを変えないようにします。
+
+```bash
+# まとめて取る
+nas-search "<検索語>" --max-results 300 > all.json
+# 20件ずつ取る（next_offset をたどる）
+off=0; n=1
+while [ -n "$off" ]; do
+  nas-search "<検索語>" --limit 20 --offset "$off" > "page$n.json" || break
+  off=$(python3 -c 'import json,sys; v=json.load(open(sys.argv[1]))["next_offset"]; print("" if v is None else v)' "page$n.json")
+  n=$((n+1)); [ "$n" -gt 20 ] && break
+done
+# 重複がないか、まとめて取った結果と同じか
+python3 - <<'PY'
+import glob, json
+pages = sorted(glob.glob("page*.json"), key=lambda p: int(p[4:-5]))
+paged = [h["share_path"] for p in pages for h in json.load(open(p))["hits"]]
+whole = [h["share_path"] for h in json.load(open("all.json"))["hits"]]
+print("paged", len(paged), "unique", len(set(paged)))
+print("whole", len(whole), "unique", len(set(whole)))
+print("same order:", paged[:len(whole)] == whole[:len(paged)])
+PY
+```
+
+期待: `unique` が件数と同じ（重複なし）、`same order: True`。
+
+### 6-4. ページ送り（索引が更新されている最中）
+
+ページの間に索引が変わると、重複や取りこぼしが起きえます（[cli-spec.md](cli-spec.md#範囲を絞るときのページ送り)）。実際にどうなるかを記録します。**テスト用のフォルダにファイルを置く作業は、本人がします。** 終わったら、置いたファイルを消します。
+
+1. 許可した共有フォルダの中に、テスト用のフォルダを作る（索引の対象の中）
+2. まず1ページ目を取る: `nas-search "<検索語>" --limit 20 > before.json`
+3. テスト用のフォルダに、名前に検索語を含むファイルを10個ほど作る
+4. Universal Search の設定の「Indexed Folder List」で状態が「Finished」に戻るのを待つ（かかった時間も記録する）
+5. 2ページ目を取る: `nas-search "<検索語>" --limit 20 --offset 20 > after.json`
+6. `before.json` と `after.json` の `share_path` に重なりがあるか、新しいファイルがどちらかに出たかを記録する
+7. 同じことを、ファイルを消す場合でも試す
+8. テスト用のファイルとフォルダを消す
+
+結果は「重複 N 件・取りこぼしの疑い N 件」のように数で記録し、原因は断定しません。
+
+### 6-5. 異常のとき
+
+| 操作 | 期待 |
+|---|---|
+| `session start --max-age 2m --keepalive 0` で始め、3分後に検索 | exit 8（`session_required`）。セッションは自分で終わっている |
+| 検索の途中でエージェント側のネットワークを切る | `nas-search` が exit 5。NAS 側の検索セッションは動き続け、`--status` の `consecutive_failures` は増えない |
+| `nas-search --timeout 5` で、時間のかかる検索をする | exit 5（応答が 5 秒ない）。検索セッションは動き続ける |
+| DSM の画面で、検索専用アカウントの接続を切る | 3回続けて検索が失敗すると、セッションが終わる（exit 8）。`last_error` の値をそのまま記録する |
+| NAS を再起動する | セッションは消える。入口は exit 8。人が始め直すまで検索できない |
+| 範囲外の結果がとても多い検索語 | `scan_limit`（exit 4）。同じ呼び出しを繰り返すと続きを読む |
+
+### 6-6. 長い時間の運用
+
+既定の 8 時間、24 時間、7 日の順に試します。90 日の試験が終わるのを待たずに公開してよいですが、試していない期間は「未確認」と書きます。
+
+- 1時間ごとに `nas-search --status` を記録する（`remaining_seconds`、`searches`、`consecutive_failures`、`last_error`）。エージェントに任せてかまいません。パスワードや OTP は要りません
+- 1日に数回、実際に検索して結果が返るか確かめる
+- 終わったら、NAS の `~/.unisearch/broker.log` で、keepalive の失敗やログアウトの記録を確かめる（イベント名と回数だけが書かれています）
+
 ## 記録テンプレート
 
 ```
@@ -77,4 +164,10 @@ scripts/remote-run.sh -t <nas-host> test --limit 3 --raw > raw-test.json
 手順3: exit=
 手順4: total= returned= exit=  形式所見:
 手順5: 各 exit / api_code
+手順6-1: version / check-api / 表示
+手順6-2: 範囲外 0件か / 断られたコマンド
+手順6-3: paged= unique= whole= same order=
+手順6-4: 索引の更新にかかった時間 / 重複 N 件 / 取りこぼしの疑い N 件
+手順6-5: 各 exit / last_error
+手順6-6: 期間 / 最後まで検索できたか / keepalive の失敗の回数
 ```
