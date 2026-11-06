@@ -1,0 +1,7 @@
+# 外部の部品は GitHub Actions だけ（Python は標準ライブラリだけで、ほかのパッケージは使わない）
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
