@@ -74,14 +74,14 @@ v0.4.0 の後に変えたところ（ページ送り、設定ファイル、待�
 
 ここで使う検索語・件数・パスは、記録するときに伏せ字にします。結果を保存したファイル（`page*.json` など）はコミットしません。
 
-### 6-1. 導入と移行
+### 6-1. 導入
 
 | 確認 | 期待 |
 |---|---|
 | `~/.local/bin/unisearch --version` | `unisearch 0.7.0` |
 | `nas-search --version`（エージェント側） | `nas-search 0.4.0` |
 | `~/.local/bin/unisearch --check-api` | `"ok": true`、exit 0 |
-| 古い名前からの移行（[agent-setup.md](agent-setup.md#古い名前synosearchから移るとき)） | `authorized_keys` の `command=` が `unisearch` を指し、古い `synosearch` を呼べない |
+| `authorized_keys` のエージェント用の行 | 1行だけで、`command=` が `unisearch` を指す |
 | `session start` の表示 | パスワードと2段階認証の入力欄に DSM アカウント名が出る。「1回の検索は最長 95 秒」と出る（既定の設定のとき） |
 | `nas-search --status` | exit 0。`remaining_seconds` が有効期間に合う |
 

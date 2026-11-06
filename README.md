@@ -61,7 +61,7 @@ AIエージェント ──ssh（検索専用の鍵）──▶ NAS: unisearch -
 > Universal Search 2.0（2026年6月）は、今のところ一部の上位機種だけに入れられます（[Release Notes](https://www.synology.com/en-global/releaseNote/SynoFinder)）。このツールは 2.0 では試していません。
 
 > [!NOTE]
-> このツールのコマンド名は `unisearch` です。v0.6 までは `synosearch` でしたが、DSM にもとからある `/usr/syno/bin/synosearch`（ヘルプを検索する別のコマンド）と同じ名前だったので変えました。古い名前で入れている場合は、[導入手順](docs/agent-setup.md#古い名前synosearchから移るとき)を見てください。
+> このツールのコマンド名は `unisearch` です。v0.6 までは `synosearch` でしたが、DSM にもとからある `/usr/syno/bin/synosearch`（ヘルプを検索する別のコマンド）と同じ名前だったので変えました。
 
 ## 使い方
 

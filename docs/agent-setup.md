@@ -120,27 +120,6 @@ mkdir -p ~/.claude/skills && ln -s "$PWD/skills/nas-search" ~/.claude/skills/nas
 - エージェントの鍵を無効にする: `authorized_keys` から該当の1行を消す
 - すべてやめる: 上の2つに加えて `~/.local/bin/unisearch` と `~/.unisearch/` を削除
 
-## 古い名前（synosearch）から移るとき
-
-v0.6 までは、コマンド名・設定の置き場所・環境変数が `synosearch` でした。v0.7.0 で `unisearch` に変えました。古い名前で入れている場合は、本人が次のように移します。
-
-NAS で:
-
-1. 動いている検索セッションを止める: `~/.local/bin/synosearch session stop`
-2. 手順1で `~/.local/bin/unisearch` を置く
-3. `authorized_keys` のエージェント用の行で、`command="<HOME>/.local/bin/synosearch --agent-gateway"` を `unisearch` に書き換える
-4. 設定ファイルがあれば移す: `mv ~/.config/synosearch ~/.config/unisearch`
-5. 古いものを消す: `~/.local/bin/synosearch` と `~/.synosearch/`
-6. 手順3で検索セッションを始め直す
-
-エージェントを動かすマシンで:
-
-1. 新しい `clients/nas-search` を置き直す
-2. 設定ファイルを移す: `mv ~/.config/synosearch ~/.config/unisearch`
-3. 環境変数 `SYNOSEARCH_HOST` などを使っていれば、`UNISEARCH_HOST` などに変える
-
-鍵ファイル（`~/.ssh/synosearch_agent`）は、名前が古いままでもそのまま使えます。`client.conf` の `key=` がその場所を指していれば十分です。
-
 ## 記録すること（docs/verification.md へ）
 
 - 手順3: SSH 切断後も残ったか
