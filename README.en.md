@@ -15,7 +15,7 @@ A small CLI that searches the **existing Universal Search index** (full text) of
 > This tool uses a Web API that Synology does not publish (`SYNO.Finder.FileIndexing.Search`). A DSM update may break it without notice. This is an unofficial tool and is not affiliated with Synology. Synology, DSM and Universal Search are trademarks of Synology Inc.
 
 > [!NOTE]
-> The detailed documents under `docs/` are in Japanese. Messages printed by the commands are also in Japanese for now; English messages, chosen by a setting, are planned for the next version (0.8.0). Agents should rely on the JSON fields (`error.type`) and exit codes, which are stable and documented below.
+> The detailed documents under `docs/` are in Japanese. Messages printed by the commands are in Japanese by default; put `lang = en` in the settings files for English (see [Settings files](#settings-files)). Agents should rely on the JSON fields (`error.type`) and exit codes, which are stable and documented below.
 
 ## Why
 
@@ -148,8 +148,10 @@ Timing values can be changed in settings files. Order of precedence: command-lin
 
 | Where | File | Main settings |
 |---|---|---|
-| NAS | `~/.config/unisearch/server.conf` | Session length, keepalive, timeouts |
-| Agent's machine | `~/.config/unisearch/client.conf` | Host, key, wait time |
+| NAS | `~/.config/unisearch/server.conf` | Session length, keepalive, timeouts, language |
+| Agent's machine | `~/.config/unisearch/client.conf` | Host, key, wait time, language |
+
+For English messages, write `lang = en` in both files (on the agent's machine, `UNISEARCH_LANG=en` also works). Messages from a search session that is already running stay in the language it started with. JSON keys, `error.type` and exit codes are the same in every language.
 
 > [!NOTE]
 > TLS certificate checks are skipped only because the target is the NAS itself (`127.0.0.1`). Do not point it at a remote URL.

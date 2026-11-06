@@ -112,8 +112,10 @@ nas-search --status
 
 | 場所 | ファイル | 主な設定 |
 |---|---|---|
-| NAS | `~/.config/unisearch/server.conf` | セッションの有効期間・keepalive・各タイムアウト |
-| エージェント側 | `~/.config/unisearch/client.conf` | 接続先・鍵・待ち時間 |
+| NAS | `~/.config/unisearch/server.conf` | セッションの有効期間・keepalive・各タイムアウト・表示の言語 |
+| エージェント側 | `~/.config/unisearch/client.conf` | 接続先・鍵・待ち時間・表示の言語 |
+
+表示は既定で日本語です。英語にするには、両方のファイルに `lang = en` と書きます。JSON のキー・`error.type`・終了コードは、言語によらず同じです。
 
 一覧は [docs/cli-spec.md](docs/cli-spec.md) の「設定ファイル」にあります。
 

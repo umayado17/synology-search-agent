@@ -7,7 +7,7 @@ description: Search files on the user's Synology NAS through its Universal Searc
 
 `nas-search` searches the Universal Search (full-text) index of a Synology NAS over SSH and returns JSON. It only searches the shared folders the user allowed (for example `/archive`).
 
-Answer the user in their own language. The command's messages are in Japanese; rely on `error.type` and the exit code, not on the message text.
+Answer the user in their own language. The command's messages are in Japanese or English, depending on the settings; rely on `error.type` and the exit code, not on the message text.
 
 ## What it can and cannot do
 

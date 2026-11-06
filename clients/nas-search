@@ -16,7 +16,7 @@ import shlex
 import subprocess
 import sys
 
-VERSION = "0.4.0"
+VERSION = "0.5.0"
 SCHEMA_VERSION = 1
 
 EXIT_OK = 0
@@ -40,8 +40,18 @@ SSH_OPTIONS = [
 ]
 DEFAULT_TIMEOUT = 260         # NAS 側の入口が待つ最長 250 秒より長く（NAS の設定によらず先に切らない）
 DEFAULT_CONNECT_TIMEOUT = 15
-CONFIG_KEYS = ("host", "key", "timeout", "connect_timeout")
+CONFIG_KEYS = ("host", "key", "timeout", "connect_timeout", "lang")
 SECRET_WORDS = ("pass", "otp", "sid", "secret", "token", "cookie", "credential")
+
+
+# 表示の言語。設定ファイルの lang か環境変数 UNISEARCH_LANG（ja / en）で選ぶ。既定は ja。
+# JSON のキー・error.type・終了コードは言語によらず同じ。NAS 側の文は NAS の server.conf の lang に従う。
+LANGUAGES = ("ja", "en")
+LANG = "ja"
+
+
+def t(ja, en):
+    return en if LANG == "en" else ja
 
 
 class ClientError(Exception):
@@ -61,7 +71,7 @@ def emit_error(error, stderr):
 # ---------------------------------------------------------------- 設定
 
 def read_config_file(path):
-    """KEY=VALUE 形式（host, key, timeout, connect_timeout）。# で始まる行は無視。無ければ空。"""
+    """KEY=VALUE 形式（host, key, timeout, connect_timeout, lang）。# で始まる行は無視。無ければ空。"""
     values = {}
     try:
         with open(path, encoding="utf-8") as handle:
@@ -73,15 +83,19 @@ def read_config_file(path):
         if not line or line.startswith("#"):
             continue
         if "=" not in line:
-            raise ClientError("config", "%s の %d 行目: `名前=値` の形で書いてください"
+            raise ClientError("config", t("%s の %d 行目: `名前=値` の形で書いてください",
+                                          "%s line %d: write it as `name=value`")
                               % (path, number), EXIT_USAGE)
         name, value = line.split("=", 1)
         name = name.strip().lower()
         if any(word in name for word in SECRET_WORDS):
-            raise ClientError("config", "%s の %d 行目: 設定ファイルにパスワードなどは書けません"
+            raise ClientError("config", t("%s の %d 行目: 設定ファイルにパスワードなどは書けません",
+                                          "%s line %d: passwords and the like cannot go in "
+                                          "the settings file")
                               % (path, number), EXIT_USAGE)
         if name not in CONFIG_KEYS:
-            raise ClientError("config", "%s の %d 行目: 知らない設定名です（使えるもの: %s）"
+            raise ClientError("config", t("%s の %d 行目: 知らない設定名です（使えるもの: %s）",
+                                          "%s line %d: unknown setting (known: %s)")
                               % (path, number, ", ".join(CONFIG_KEYS)), EXIT_USAGE)
         values[name] = value.strip()
     return values
@@ -92,26 +106,56 @@ def seconds_setting(value, name, low, high):
         return None
     text = str(value)
     if not text.isdigit() or not low <= int(text) <= high:
-        raise ClientError("config", "%s は %d〜%d の整数（秒）" % (name, low, high), EXIT_USAGE)
+        raise ClientError("config", t("%s は %d〜%d の整数（秒）",
+                                      "%s must be an integer from %d to %d (seconds)")
+                          % (name, low, high), EXIT_USAGE)
     return int(text)
+
+
+def config_path(environ):
+    return environ.get("UNISEARCH_CLIENT_CONFIG") or DEFAULT_CONFIG
+
+
+def peek_language(environ):
+    """環境変数 > 設定ファイル > ja。ここでは読めない・不正な値を ja とみなす（エラーは resolve_config で出す）。"""
+    lang = (environ.get("UNISEARCH_LANG") or "").strip().lower()
+    if lang:
+        return lang if lang in LANGUAGES else "ja"
+    try:
+        with open(config_path(environ), encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return "ja"
+    for line in lines:
+        name, sep, value = line.strip().partition("=")
+        if sep and name.strip().lower() == "lang" and value.strip().lower() in LANGUAGES:
+            lang = value.strip().lower()
+    return lang or "ja"
 
 
 def resolve_config(args, environ):
     """優先順: 引数 > 環境変数 > 設定ファイル。"""
-    path = environ.get("UNISEARCH_CLIENT_CONFIG") or DEFAULT_CONFIG
+    path = config_path(environ)
     file_values = read_config_file(path)
+    lang = (environ.get("UNISEARCH_LANG") or file_values.get("lang") or "ja").strip().lower()
+    if lang not in LANGUAGES:
+        raise ClientError("config", "lang は ja か en / lang must be ja or en", EXIT_USAGE)
     host = args.host or environ.get("UNISEARCH_HOST") or file_values.get("host")
     key = args.key or environ.get("UNISEARCH_KEY") or file_values.get("key")
     if not host or not key:
         raise ClientError(
             "config",
-            "接続先と鍵が未設定です。UNISEARCH_HOST（例 user@nas）と UNISEARCH_KEY（鍵ファイル）"
-            "を環境変数か %s に設定してください" % path, EXIT_USAGE)
+            t("接続先と鍵が未設定です。UNISEARCH_HOST（例 user@nas）と UNISEARCH_KEY（鍵ファイル）"
+              "を環境変数か %s に設定してください",
+              "The host and key are not set. Set UNISEARCH_HOST (e.g. user@nas) and "
+              "UNISEARCH_KEY (the key file) as environment variables or in %s") % path,
+            EXIT_USAGE)
     if host.startswith("-"):
-        raise ClientError("config", "接続先の形式が不正です", EXIT_USAGE)
+        raise ClientError("config", t("接続先の形式が不正です", "Invalid host format"), EXIT_USAGE)
     key = os.path.expanduser(key)
     if not os.path.isfile(key):
-        raise ClientError("config", "鍵ファイルがありません: %s" % key, EXIT_USAGE)
+        raise ClientError("config", t("鍵ファイルがありません: %s", "No key file: %s") % key,
+                          EXIT_USAGE)
     timeout = args.timeout if args.timeout is not None else (
         seconds_setting(file_values.get("timeout"), "timeout", 5, 600) or DEFAULT_TIMEOUT)
     connect_timeout = seconds_setting(file_values.get("connect_timeout"), "connect_timeout",
@@ -139,15 +183,19 @@ def call_remote(runner, ssh_bin, host, key, remote_command, timeout,
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            stdin=subprocess.DEVNULL, timeout=timeout)
     except FileNotFoundError:
-        raise ClientError("ssh", "ssh コマンドが見つかりません", EXIT_NETWORK)
+        raise ClientError("ssh", t("ssh コマンドが見つかりません", "The ssh command was not found"),
+                          EXIT_NETWORK)
     except subprocess.TimeoutExpired:
-        raise ClientError("ssh", "NAS からの応答が %d 秒ありません" % timeout, EXIT_NETWORK)
+        raise ClientError("ssh", t("NAS からの応答が %d 秒ありません",
+                                    "No answer from the NAS for %d seconds") % timeout,
+                          EXIT_NETWORK)
     stdout = completed.stdout.decode("utf-8", "replace")
     stderr = completed.stderr.decode("utf-8", "replace")
     if completed.returncode == SSH_FAILURE:
         detail = " ".join(line for line in stderr.splitlines()
                           if line and not line.startswith("**"))[:300]
-        raise ClientError("ssh", "SSH 接続に失敗しました: %s" % (detail or "詳細不明"),
+        raise ClientError("ssh", t("SSH 接続に失敗しました: %s", "SSH connection failed: %s")
+                          % (detail or t("詳細不明", "no details")),
                           EXIT_NETWORK)
     return completed.returncode, stdout, stderr
 
@@ -156,9 +204,11 @@ def parse_result(stdout):
     try:
         result = json.loads(stdout)
     except ValueError:
-        raise ClientError("response", "NAS の応答が JSON ではありません", EXIT_RESPONSE)
+        raise ClientError("response", t("NAS の応答が JSON ではありません", "The NAS answer is not JSON"),
+                          EXIT_RESPONSE)
     if not isinstance(result, dict) or not isinstance(result.get("hits"), list):
-        raise ClientError("response", "NAS の応答形式が想定外です", EXIT_RESPONSE)
+        raise ClientError("response", t("NAS の応答形式が想定外です",
+                                       "Unexpected answer format from the NAS"), EXIT_RESPONSE)
     return result
 
 
@@ -182,7 +232,9 @@ def collect(runner, ssh_bin, host, key, query, offset, max_results, timeout,
             return code, None, stderr
         page = parse_result(stdout)
         if len(page["hits"]) > size:
-            raise ClientError("response", "NAS が頼んだ件数より多く返しました", EXIT_RESPONSE)
+            raise ClientError("response", t("NAS が頼んだ件数より多く返しました",
+                                           "The NAS returned more results than asked"),
+                              EXIT_RESPONSE)
         hits.extend(page["hits"])
         has_error = has_error or bool(page.get("has_error"))
         next_offset = page.get("next_offset")
@@ -211,18 +263,31 @@ class _Parser(argparse.ArgumentParser):
 
 def build_parser():
     parser = _Parser(prog="nas-search", allow_abbrev=False,
-                     description="NAS の Universal Search を検索（結果は JSON）")
-    parser.add_argument("query", nargs="?", help="検索語（ファイル名・本文が対象）")
-    parser.add_argument("--limit", type=int, default=20, help="1回で取る件数 1〜100（既定20）")
-    parser.add_argument("--offset", type=int, default=0, help="開始位置（前回の next_offset）")
+                     description=t("NAS の Universal Search を検索（結果は JSON）",
+                                   "Search the NAS's Universal Search (results in JSON)"))
+    parser.add_argument("query", nargs="?",
+                        help=t("検索語（ファイル名・本文が対象）",
+                               "search words (matched against file names and text)"))
+    parser.add_argument("--limit", type=int, default=20,
+                        help=t("1回で取る件数 1〜100（既定20）",
+                               "results per call, 1-100 (default 20)"))
+    parser.add_argument("--offset", type=int, default=0,
+                        help=t("開始位置（前回の next_offset）",
+                               "start position (next_offset from the last call)"))
     parser.add_argument("--max-results", type=int,
-                        help="ページを自動で送り、最大この件数まで集める（1〜%d）" % MAX_RESULTS_CAP)
-    parser.add_argument("--status", action="store_true", help="検索セッションの状態を表示")
-    parser.add_argument("--host", help="接続先 user@host（既定は UNISEARCH_HOST）")
-    parser.add_argument("--key", help="鍵ファイル（既定は UNISEARCH_KEY）")
+                        help=t("ページを自動で送り、最大この件数まで集める（1〜%d）",
+                               "page automatically and collect up to this many (1-%d)")
+                        % MAX_RESULTS_CAP)
+    parser.add_argument("--status", action="store_true",
+                        help=t("検索セッションの状態を表示", "show the search session state"))
+    parser.add_argument("--host", help=t("接続先 user@host（既定は UNISEARCH_HOST）",
+                                         "user@host to connect to (default: UNISEARCH_HOST)"))
+    parser.add_argument("--key", help=t("鍵ファイル（既定は UNISEARCH_KEY）",
+                                        "key file (default: UNISEARCH_KEY)"))
     parser.add_argument("--timeout", type=int,
-                        help="1回の呼び出しの上限秒（既定は設定ファイルの timeout、無ければ%d）"
-                        % DEFAULT_TIMEOUT)
+                        help=t("1回の呼び出しの上限秒（既定は設定ファイルの timeout、無ければ%d）",
+                               "time limit per call in seconds (default: timeout in the "
+                               "settings file, else %d)") % DEFAULT_TIMEOUT)
     parser.add_argument("--version", action="version", version="%(prog)s " + VERSION)
     return parser
 
@@ -230,21 +295,25 @@ def build_parser():
 def validate(args):
     if args.status:
         if args.query is not None or args.max_results is not None or args.offset:
-            raise ClientError("usage", "--status は検索語・--max-results・--offset と同時に指定できません",
-                              EXIT_USAGE)
+            raise ClientError("usage", t("--status は検索語・--max-results・--offset と同時に指定できません",
+                                         "--status cannot be used with search words, "
+                                         "--max-results or --offset"), EXIT_USAGE)
         return
     if args.query is None or not args.query.strip():
-        raise ClientError("usage", "検索語を指定してください", EXIT_USAGE)
+        raise ClientError("usage", t("検索語を指定してください", "Give search words"), EXIT_USAGE)
     if len(args.query) > 1000:
-        raise ClientError("usage", "検索語が長すぎます（1000文字まで）", EXIT_USAGE)
+        raise ClientError("usage", t("検索語が長すぎます（1000文字まで）",
+                                      "The search words are too long (1000 characters at most)"),
+                          EXIT_USAGE)
     if not 1 <= args.limit <= 100:
-        raise ClientError("usage", "--limit は1〜100", EXIT_USAGE)
+        raise ClientError("usage", t("--limit は1〜100", "--limit must be 1-100"), EXIT_USAGE)
     if not 0 <= args.offset <= 100000:
-        raise ClientError("usage", "--offset は0〜100000", EXIT_USAGE)
+        raise ClientError("usage", t("--offset は0〜100000", "--offset must be 0-100000"), EXIT_USAGE)
     if args.max_results is not None and not 1 <= args.max_results <= MAX_RESULTS_CAP:
-        raise ClientError("usage", "--max-results は1〜%d" % MAX_RESULTS_CAP, EXIT_USAGE)
+        raise ClientError("usage", t("--max-results は1〜%d", "--max-results must be 1-%d")
+                          % MAX_RESULTS_CAP, EXIT_USAGE)
     if args.timeout is not None and not 5 <= args.timeout <= 600:
-        raise ClientError("usage", "--timeout は5〜600", EXIT_USAGE)
+        raise ClientError("usage", t("--timeout は5〜600", "--timeout must be 5-600"), EXIT_USAGE)
 
 
 def main(argv=None, environ=None, runner=None, stdout=None, stderr=None):
@@ -254,6 +323,8 @@ def main(argv=None, environ=None, runner=None, stdout=None, stderr=None):
     runner = runner or subprocess.run
     ssh_bin = environ.get("UNISEARCH_SSH_BIN", "ssh")
     try:
+        global LANG
+        LANG = peek_language(environ)
         args = build_parser().parse_args(argv)
         validate(args)
         host, key, timeout, connect_timeout = resolve_config(args, environ)
@@ -275,7 +346,7 @@ def main(argv=None, environ=None, runner=None, stdout=None, stderr=None):
         emit_error(exc, stderr)
         return exc.exit_code
     except KeyboardInterrupt:
-        emit_error(ClientError("interrupted", "中断されました", 130), stderr)
+        emit_error(ClientError("interrupted", t("中断されました", "Interrupted"), 130), stderr)
         return 130
 
 

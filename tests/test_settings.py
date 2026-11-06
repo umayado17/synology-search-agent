@@ -28,7 +28,7 @@ class SettingsFileTest(unittest.TestCase):
         settings = cli.load_settings(self.path)
         self.assertEqual(settings, {"session_max_age": 8 * 3600, "session_keepalive": 600,
                                     "http_timeout": 45, "scan_time_budget": 40,
-                                    "scan_max_pages": 20})
+                                    "scan_max_pages": 20, "lang": "ja"})
 
     def test_file_values_and_comments(self):
         self.write("# 長めに使う\nsession_max_age = 7d\nSESSION_KEEPALIVE=5m\n\n"

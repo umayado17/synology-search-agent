@@ -22,7 +22,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 
-VERSION = "0.7.0"
+VERSION = "0.8.0"
 SCHEMA_VERSION = 1
 
 # NAS自身へのループバック接続専用。外部ホストに書き換えて流用しないこと。
@@ -107,15 +107,49 @@ EXIT_SESSION_REQUIRED = 8
 EXIT_SESSION_STATE = 9
 EXIT_INTERRUPTED = 130
 
+# ---------------------------------------------------------------- 表示の言語
+#
+# 設定ファイルの lang（ja / en）で選ぶ。既定は ja。JSON のキー・error.type・終了コードは
+# 言語によらず同じ。
+
+LANGUAGES = ("ja", "en")
+LANG = "ja"
+
+
+def t(ja, en):
+    """表示する文を、設定の言語で選ぶ。"""
+    return en if LANG == "en" else ja
+
+
+def set_language(lang):
+    global LANG
+    LANG = lang if lang in LANGUAGES else "ja"
+
+
+def peek_language(path):
+    """設定ファイルから lang だけを読む。読めない・不正なときは ja（エラーは load_settings で出す）。"""
+    try:
+        with open(path, encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return "ja"
+    lang = "ja"
+    for line in lines:
+        name, sep, value = line.strip().partition("=")
+        if sep and name.strip().lower() == "lang" and value.strip().lower() in LANGUAGES:
+            lang = value.strip().lower()
+    return lang
+
+
 # SYNO.API.Auth の公開資料にある代表的なコード。参考表示のみで断定はしない。
 AUTH_ERROR_HINTS = {
-    400: "アカウントまたはパスワードが正しくない可能性",
-    401: "アカウントが無効化されている可能性",
-    402: "権限が拒否された可能性",
-    403: "2段階認証コードが必要",
-    404: "2段階認証コードの検証に失敗した可能性",
-    406: "2段階認証の設定が必須とされている可能性",
-    407: "IPがブロックされている可能性",
+    400: ("アカウントまたはパスワードが正しくない可能性", "possibly a wrong account or password"),
+    401: ("アカウントが無効化されている可能性", "possibly a disabled account"),
+    402: ("権限が拒否された可能性", "possibly permission denied"),
+    403: ("2段階認証コードが必要", "a 2-step verification code is required"),
+    404: ("2段階認証コードの検証に失敗した可能性", "possibly a failed 2-step verification code"),
+    406: ("2段階認証の設定が必須とされている可能性", "possibly 2-step verification must be set up"),
+    407: ("IPがブロックされている可能性", "possibly a blocked IP address"),
 }
 
 
@@ -152,14 +186,16 @@ class HttpTransport:
                                         timeout=self.timeout) as response:
                 raw = response.read()
         except urllib.error.HTTPError as exc:
-            raise CliError("network", "HTTPエラー %s" % exc.code, EXIT_NETWORK)
+            raise CliError("network", t("HTTPエラー %s", "HTTP error %s") % exc.code, EXIT_NETWORK)
         except (urllib.error.URLError, OSError) as exc:
             reason = getattr(exc, "reason", exc)
-            raise CliError("network", "接続できません: %s" % reason, EXIT_NETWORK)
+            raise CliError("network", t("接続できません: %s", "Cannot connect: %s") % reason,
+                           EXIT_NETWORK)
         try:
             return json.loads(raw.decode("utf-8"))
         except (UnicodeDecodeError, ValueError):
-            raise CliError("response", "APIの応答がJSONではありません", EXIT_RESPONSE)
+            raise CliError("response", t("APIの応答がJSONではありません", "The API response is not JSON"),
+                           EXIT_RESPONSE)
 
 
 def api_code_of(response):
@@ -171,7 +207,8 @@ def api_code_of(response):
 
 def require_dict(response, what):
     if not isinstance(response, dict) or "success" not in response:
-        raise CliError("response", "%sの応答形式が想定外です" % what, EXIT_RESPONSE)
+        raise CliError("response", t("%sの応答形式が想定外です", "Unexpected %s response format") % what,
+                       EXIT_RESPONSE)
     return response
 
 
@@ -182,18 +219,19 @@ def login(transport, username, password, otp):
         "api": AUTH_API, "version": AUTH_VERSION, "method": "login",
         "account": username, "passwd": password, "otp_code": otp,
         "session": SESSION_NAME, "format": "sid",
-    }), "認証")
+    }), t("認証", "login"))
     if not response.get("success"):
         code = api_code_of(response)
         hint = AUTH_ERROR_HINTS.get(code)
-        message = "認証失敗（コード %s）" % code
+        message = t("認証失敗（コード %s）", "Login failed (code %s)") % code
         if hint:
-            message += "：%s" % hint
+            message += t("：%s", ": %s") % t(*hint)
         raise CliError("auth", message, EXIT_AUTH, code)
     data = response.get("data")
     sid = data.get("sid") if isinstance(data, dict) else None
     if not isinstance(sid, str) or not sid:
-        raise CliError("response", "認証応答にセッションIDがありません", EXIT_RESPONSE)
+        raise CliError("response", t("認証応答にセッションIDがありません",
+                                      "The login response has no session ID"), EXIT_RESPONSE)
     return sid
 
 
@@ -227,17 +265,20 @@ def build_search_params(query, limit, offset, sid):
 
 def search(transport, sid, query, limit, offset):
     response = require_dict(
-        transport.call(API_URL, build_search_params(query, limit, offset, sid)), "検索")
+        transport.call(API_URL, build_search_params(query, limit, offset, sid)), t("検索", "search"))
     if not response.get("success"):
         code = api_code_of(response)
         # 119/120 等の意味は前提に依存するため解釈を付けない（AGENTS.md）。
-        raise CliError("api", "検索失敗（コード %s）" % code, EXIT_API, code)
+        raise CliError("api", t("検索失敗（コード %s）", "Search failed (code %s)") % code,
+                       EXIT_API, code)
     data = response.get("data")
     if not isinstance(data, dict):
-        raise CliError("response", "検索応答に data がありません", EXIT_RESPONSE)
+        raise CliError("response", t("検索応答に data がありません", "The search response has no data"),
+                       EXIT_RESPONSE)
     hits = data.get("hits", [])
     if not isinstance(hits, list):
-        raise CliError("response", "検索応答の hits が配列ではありません", EXIT_RESPONSE)
+        raise CliError("response", t("検索応答の hits が配列ではありません",
+                                      "hits in the search response is not a list"), EXIT_RESPONSE)
     return data
 
 
@@ -246,9 +287,10 @@ def check_api(transport):
     response = require_dict(transport.call(INFO_URL, {
         "api": "SYNO.API.Info", "version": "1", "method": "query",
         "query": "%s,%s" % (AUTH_API, SEARCH_API),
-    }), "API情報")
+    }), t("API情報", "API info"))
     if not response.get("success"):
-        raise CliError("api", "API情報の取得失敗（コード %s）" % api_code_of(response),
+        raise CliError("api", t("API情報の取得失敗（コード %s）", "Could not get API info (code %s)")
+                       % api_code_of(response),
                        EXIT_API, api_code_of(response))
     data = response.get("data") or {}
     report = {"schema_version": SCHEMA_VERSION, "ok": True, "apis": {}}
@@ -378,8 +420,10 @@ def search_filtered(transport, sid, query, limit, offset, prefixes, checkpoints=
     if more and not hits:  # 上限まで読んでも1件も見つからず、先へ進めなかった
         raise CliError(
             "scan_limit",
-            "範囲外の結果が多く、指定の位置まで読み進められませんでした。"
-            "検索セッションを使っている場合は、同じ呼び出しを繰り返すと続きから読みます",
+            t("範囲外の結果が多く、指定の位置まで読み進められませんでした。"
+              "検索セッションを使っている場合は、同じ呼び出しを繰り返すと続きから読みます",
+              "Too many out-of-scope results to reach the requested position. "
+              "With a search session, repeat the same call to continue from where it stopped"),
             EXIT_API)
     return {
         "schema_version": SCHEMA_VERSION,
@@ -404,12 +448,12 @@ def sanitize_text(value):
 
 
 def format_text(result):
-    lines = ["検索: %s / 総件数: %s / 表示: %s" % (
+    lines = [t("検索: %s / 総件数: %s / 表示: %s", "Query: %s / Total: %s / Shown: %s") % (
         sanitize_text(result["query"]),
-        "不明" if result["total"] is None else result["total"],
+        t("不明", "unknown") if result["total"] is None else result["total"],
         result["returned"])]
     for index, hit in enumerate(result["hits"], start=result["offset"] + 1):
-        name = hit["name"] if hit["name"] is not None else "(名称なし)"
+        name = hit["name"] if hit["name"] is not None else t("(名称なし)", "(no name)")
         lines.append("%s. %s  %s" % (index, sanitize_text(name),
                                      sanitize_text(hit["share_path"] or "")))
     return "\n".join(lines)
@@ -422,7 +466,7 @@ def emit_error(error, as_json, stderr):
             "api_code": error.api_code, "exit_code": error.exit_code}}
         print(json.dumps(payload, ensure_ascii=False), file=stderr)
     else:
-        print("エラー: %s" % error.message, file=stderr)
+        print(t("エラー: %s", "Error: %s") % error.message, file=stderr)
 
 
 # ---------------------------------------------------------------- 入力
@@ -440,19 +484,23 @@ class TtyPrompter:
         except OSError:
             raise CliError(
                 "no_tty",
-                "対話入力用のTTYがありません（ssh -t で実行するか、本人が検索セッションを開始してください）",
+                t("対話入力用のTTYがありません（ssh -t で実行するか、本人が検索セッションを開始してください）",
+                  "No TTY for interactive input (run with ssh -t, or have a person start a "
+                  "search session)"),
                 EXIT_NO_TTY)
 
     def username(self):
         self._require_tty()
         # 端末はシーク不可のため "r+" のテキストモードでは開けない。読み書きを分けて開く。
         with open(self.tty_path, "w", encoding="utf-8") as out:
-            out.write("DSMユーザー名（検索に使う DSM アカウント）: ")
+            out.write(t("DSMユーザー名（検索に使う DSM アカウント）: ",
+                        "DSM user name (the DSM account used for search): "))
             out.flush()
         with open(self.tty_path, "r", encoding="utf-8") as tty:
             line = tty.readline()
         if not line:
-            raise CliError("no_tty", "ユーザー名を読み取れませんでした", EXIT_NO_TTY)
+            raise CliError("no_tty", t("ユーザー名を読み取れませんでした", "Could not read the user name"),
+                           EXIT_NO_TTY)
         return line.strip()
 
     def notice(self, text):
@@ -477,12 +525,17 @@ def ask_credentials(prompter, username, purpose):
     shown = sanitize_text(username)
     notice = getattr(prompter, "notice", None)
     if notice is not None:
-        notice("\nSynology Universal Search — %s\n"
-               "DSM アカウント: %s\n"
-               "SSH のログイン用ではなく、この DSM アカウントのパスワードと"
-               "2段階認証コードを入力してください。\n" % (purpose, shown))
-    password = prompter.secret("%s の DSM パスワード: " % shown)
-    otp = prompter.secret("%s の2段階認証コード（6桁）: " % shown)
+        notice(t("\nSynology Universal Search — %s\n"
+                 "DSM アカウント: %s\n"
+                 "SSH のログイン用ではなく、この DSM アカウントのパスワードと"
+                 "2段階認証コードを入力してください。\n",
+                 "\nSynology Universal Search — %s\n"
+                 "DSM account: %s\n"
+                 "Enter the password and 2-step verification code of this DSM account, "
+                 "not your SSH login.\n") % (purpose, shown))
+    password = prompter.secret(t("%s の DSM パスワード: ", "DSM password for %s: ") % shown)
+    otp = prompter.secret(t("%s の2段階認証コード（6桁）: ",
+                            "2-step verification code for %s (6 digits): ") % shown)
     return password, otp
 
 
@@ -501,6 +554,7 @@ SERVER_SETTINGS = {
     "http_timeout": ("45", "seconds", 1, 120),
     "scan_time_budget": ("40", "seconds", 5, 120),
     "scan_max_pages": ("20", "count", 1, 100),
+    "lang": ("ja", "language", None, None),
 }
 SECRET_WORDS = ("pass", "otp", "sid", "secret", "token", "cookie", "credential")
 GATEWAY_MARGIN = 10  # 1回の検索の最長 = 走査の上限秒 + HTTPタイムアウト + この秒数
@@ -520,15 +574,22 @@ def human_seconds(seconds):
 
 def convert_setting(name, value, spec, where):
     _, kind, low, high = spec
+    if kind == "language":
+        lang = value.lower()
+        if lang not in LANGUAGES:
+            raise CliError("config", t("%s: lang は ja か en", "%s: lang must be ja or en")
+                           % where, EXIT_USAGE)
+        return lang
     number = parse_duration(value) if kind == "duration" else (
         int(value) if value.isdigit() else None)
     if number is None or not low <= number <= high:
         if kind == "duration":
-            limits = "%s〜%s（例 8h, 30m, 7d）" % (human_seconds(low) if low else "0",
-                                               human_seconds(high))
+            limits = t("%s〜%s（例 8h, 30m, 7d）", "%s to %s (e.g. 8h, 30m, 7d)") % (
+                human_seconds(low) if low else "0", human_seconds(high))
         else:
-            limits = "%d〜%d の整数" % (low, high)
-        raise CliError("config", "%s: %s は %s" % (where, name, limits), EXIT_USAGE)
+            limits = t("%d〜%d の整数", "an integer from %d to %d") % (low, high)
+        raise CliError("config", t("%s: %s は %s", "%s: %s must be %s") % (where, name, limits),
+                       EXIT_USAGE)
     return number
 
 
@@ -542,21 +603,26 @@ def load_settings(path, spec=None):
     except FileNotFoundError:
         lines = []
     except OSError:
-        raise CliError("config", "設定ファイルを読めません: %s" % path, EXIT_USAGE)
+        raise CliError("config", t("設定ファイルを読めません: %s", "Cannot read the settings file: %s")
+                       % path, EXIT_USAGE)
     for number, line in enumerate(lines, start=1):
         line = line.strip()
         if not line or line.startswith("#"):
             continue
         if "=" not in line:
-            raise CliError("config", "%s の %d 行目: `名前 = 値` の形で書いてください"
+            raise CliError("config", t("%s の %d 行目: `名前 = 値` の形で書いてください",
+                                       "%s line %d: write it as `name = value`")
                            % (path, number), EXIT_USAGE)
         name, value = (part.strip() for part in line.split("=", 1))
         name = name.lower()
         if any(word in name for word in SECRET_WORDS):
-            raise CliError("config", "%s の %d 行目: 設定ファイルにパスワード・OTP・SID などは"
-                           "書けません" % (path, number), EXIT_USAGE)
+            raise CliError("config", t("%s の %d 行目: 設定ファイルにパスワード・OTP・SID などは"
+                                       "書けません",
+                                       "%s line %d: passwords, OTPs, SIDs and the like cannot "
+                                       "go in the settings file") % (path, number), EXIT_USAGE)
         if name not in spec:
-            raise CliError("config", "%s の %d 行目: 知らない設定名です: %s（使えるもの: %s）"
+            raise CliError("config", t("%s の %d 行目: 知らない設定名です: %s（使えるもの: %s）",
+                                       "%s line %d: unknown setting: %s (known: %s)")
                            % (path, number, sanitize_text(name), ", ".join(sorted(spec))),
                            EXIT_USAGE)
         values[name] = value
@@ -587,54 +653,74 @@ def gateway_wait():
 class _Parser(argparse.ArgumentParser):
     def error(self, message):
         self.print_usage(sys.stderr)
-        print("%s: エラー: %s" % (self.prog, message), file=sys.stderr)
+        print(t("%s: エラー: %s", "%s: error: %s") % (self.prog, message), file=sys.stderr)
         sys.exit(EXIT_USAGE)
 
 
 def build_parser():
     parser = _Parser(
         prog="unisearch",
-        description="Synology Universal SearchをSSHから検索（sudo不要・対話認証）")
-    parser.add_argument("query", nargs="?", help="検索語")
-    parser.add_argument("--limit", type=int, default=10, help="取得件数（1〜100、既定10）")
-    parser.add_argument("--offset", type=int, default=0, help="開始位置（0以上、既定0）")
-    parser.add_argument("--json", action="store_true", help="結果をJSONで出力（docs/cli-spec.md）")
+        description=t("Synology Universal SearchをSSHから検索（sudo不要・対話認証）",
+                      "Search Synology Universal Search over SSH (no sudo, interactive login)"))
+    parser.add_argument("query", nargs="?", help=t("検索語", "search words"))
+    parser.add_argument("--limit", type=int, default=10,
+                        help=t("取得件数（1〜100、既定10）", "number of results (1-100, default 10)"))
+    parser.add_argument("--offset", type=int, default=0,
+                        help=t("開始位置（0以上、既定0）", "start position (0 or more, default 0)"))
+    parser.add_argument("--json", action="store_true",
+                        help=t("結果をJSONで出力（docs/cli-spec.md）",
+                               "print the result as JSON (docs/cli-spec.md)"))
     parser.add_argument("--raw", action="store_true",
-                        help="APIの data をそのままJSON出力（実機の応答形式検証用）")
-    parser.add_argument("--user", help="DSMユーザー名（省略時は対話入力）")
+                        help=t("APIの data をそのままJSON出力（実機の応答形式検証用）",
+                               "print the API data as is (to check the real response format)"))
+    parser.add_argument("--user", help=t("DSMユーザー名（省略時は対話入力）",
+                                         "DSM user name (asked interactively if omitted)"))
     parser.add_argument("--timeout", type=float,
-                        help="HTTPタイムアウト秒（既定は設定ファイルの http_timeout、無ければ45）")
+                        help=t("HTTPタイムアウト秒（既定は設定ファイルの http_timeout、無ければ45）",
+                               "HTTP timeout in seconds (default: http_timeout in the settings "
+                               "file, else 45)"))
     parser.add_argument("--allow-prefix", action="append", default=[], metavar="PATH",
-                        help="この共有パス（例 /archive）配下の結果だけを出す。複数指定可。"
-                             "DSM の権限設定に加える多層防御")
+                        help=t("この共有パス（例 /archive）配下の結果だけを出す。複数指定可。"
+                               "DSM の権限設定に加える多層防御",
+                               "show only results under this share path (e.g. /archive); "
+                               "repeatable; an extra layer on top of DSM permissions"))
     parser.add_argument("--no-session", action="store_true",
-                        help="検索セッションが動いていても使わず、対話ログインで検索する")
+                        help=t("検索セッションが動いていても使わず、対話ログインで検索する",
+                               "log in interactively even if a search session is running"))
     parser.add_argument("--check-api", action="store_true",
-                        help="認証なしで必要APIの有無とバージョンを確認して終了")
+                        help=t("認証なしで必要APIの有無とバージョンを確認して終了",
+                               "check the required APIs and versions without logging in, "
+                               "then exit"))
     parser.add_argument("--version", action="version", version="%(prog)s " + VERSION)
     return parser
+
+
+def prefix_error():
+    return t("--allow-prefix は / で始まる共有パス（/ 単独や .. は不可）: %s",
+             "--allow-prefix must be a share path starting with / (not / alone, no ..): %s")
 
 
 def validate_args(parser, args):
     if args.check_api:
         return
     if args.query is None or args.query.strip() == "":
-        parser.error("検索語を指定してください")
+        parser.error(t("検索語を指定してください", "give search words"))
     if not (1 <= args.limit <= 100):
-        parser.error("--limit は1〜100")
+        parser.error(t("--limit は1〜100", "--limit must be 1-100"))
     if args.offset < 0:
-        parser.error("--offset は0以上")
+        parser.error(t("--offset は0以上", "--offset must be 0 or more"))
     if args.timeout is not None and not (0 < args.timeout <= 600):
-        parser.error("--timeout は0より大きく600以下")
+        parser.error(t("--timeout は0より大きく600以下", "--timeout must be more than 0 and at most 600"))
     prefixes = []
     for prefix in args.allow_prefix:
         cleaned = normalize_prefix(prefix)
         if cleaned is None:
-            parser.error("--allow-prefix は / で始まる共有パス（/ 単独や .. は不可）: %s" % prefix)
+            parser.error(prefix_error() % prefix)
         prefixes.append(cleaned)
     args.allow_prefix = prefixes
     if prefixes and args.raw:
-        parser.error("--raw は絞り込みをしないため --allow-prefix と併用できません")
+        parser.error(t("--raw は絞り込みをしないため --allow-prefix と併用できません",
+                        "--raw does not filter, so it cannot be used with --allow-prefix"))
 
 
 def restrict_result(result, prefixes):
@@ -668,7 +754,7 @@ def run(args, transport, prompter, stdout, stderr, socket_path):
             "limit": args.limit, "offset": args.offset}, args.session_wait)
         result = response.get("result")
         if not isinstance(result, dict):
-            raise CliError("response", "検索セッションの応答形式が想定外です", EXIT_RESPONSE)
+            raise CliError("response", session_format_error(), EXIT_RESPONSE)
         if args.allow_prefix:
             result = restrict_result(result, args.allow_prefix)
         if as_json:
@@ -679,8 +765,8 @@ def run(args, transport, prompter, stdout, stderr, socket_path):
 
     username = args.user or prompter.username()
     if not username:
-        raise CliError("usage", "ユーザー名が空です", EXIT_USAGE)
-    password, otp = ask_credentials(prompter, username, "検索")
+        raise CliError("usage", t("ユーザー名が空です", "The user name is empty"), EXIT_USAGE)
+    password, otp = ask_credentials(prompter, username, t("検索", "search"))
     sid = None
     try:
         sid = login(transport, username, password, otp)
@@ -695,7 +781,8 @@ def run(args, transport, prompter, stdout, stderr, socket_path):
     finally:
         password = otp = None
         if sid and not logout(transport, sid):
-            print("警告: ログアウトを確認できませんでした", file=stderr)
+            print(t("警告: ログアウトを確認できませんでした", "Warning: could not confirm the logout"),
+                  file=stderr)
         sid = None
 
     if args.raw:
@@ -762,8 +849,20 @@ def is_int(value):
 def session_required_error():
     return CliError(
         "session_required",
-        "検索セッションがありません。本人が ssh -t で `unisearch session start` を実行してください",
+        t("検索セッションがありません。本人が ssh -t で `unisearch session start` を実行してください",
+          "No search session. A person must run `unisearch session start` over ssh -t"),
         EXIT_SESSION_REQUIRED)
+
+
+def session_format_error():
+    return t("検索セッションの応答形式が想定外です", "Unexpected response format from the search session")
+
+
+def session_running_error():
+    return CliError("session_running",
+                    t("検索セッションはすでに動いています（unisearch session status）",
+                      "A search session is already running (unisearch session status)"),
+                    EXIT_SESSION_STATE)
 
 
 def error_payload(error):
@@ -779,7 +878,8 @@ def ensure_private_dir(path):
         pass
     info = os.lstat(path)
     if not stat.S_ISDIR(info.st_mode) or info.st_uid != os.getuid():
-        raise CliError("state", "状態ディレクトリが自分所有のディレクトリではありません: %s" % path,
+        raise CliError("state", t("状態ディレクトリが自分所有のディレクトリではありません: %s",
+                                  "The state directory is not a directory you own: %s") % path,
                        EXIT_SESSION_STATE)
     if stat.S_IMODE(info.st_mode) & 0o077:
         os.chmod(path, 0o700)
@@ -824,11 +924,10 @@ def socket_is_live(path):
 def create_listener(path):
     if os.path.lexists(path):
         if socket_is_live(path):
-            raise CliError("session_running",
-                           "検索セッションはすでに動いています（unisearch session status）",
-                           EXIT_SESSION_STATE)
+            raise session_running_error()
         if not stat.S_ISSOCK(os.lstat(path).st_mode):
-            raise CliError("state", "ソケットの位置に別のファイルがあります: %s" % path,
+            raise CliError("state", t("ソケットの位置に別のファイルがあります: %s",
+                                      "Another file is where the socket should be: %s") % path,
                            EXIT_SESSION_STATE)
         os.unlink(path)  # 前回の異常終了で残った古いソケット
     listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
@@ -902,7 +1001,8 @@ class Broker:
 
     def handle(self, request):
         if not isinstance(request, dict):
-            return error_payload(CliError("usage", "要求の形式が不正です", EXIT_USAGE))
+            return error_payload(CliError("usage", t("要求の形式が不正です", "Bad request format"),
+                                          EXIT_USAGE))
         op = request.get("op")
         if op == "status":
             return {"ok": True, "status": self.status()}
@@ -911,7 +1011,7 @@ class Broker:
             return {"ok": True}
         if op == "search":
             return self._search(request)
-        return error_payload(CliError("usage", "未対応の操作です", EXIT_USAGE))
+        return error_payload(CliError("usage", t("未対応の操作です", "Unsupported operation"), EXIT_USAGE))
 
     def _search(self, request):
         if self.clock() >= self.expires_at:
@@ -921,11 +1021,12 @@ class Broker:
         limit = request.get("limit", 10)
         offset = request.get("offset", 0)
         if not isinstance(query, str) or not query.strip() or len(query) > MAX_QUERY_CHARS:
-            return error_payload(CliError("usage", "検索語が不正です", EXIT_USAGE))
+            return error_payload(CliError("usage", bad_query_error(), EXIT_USAGE))
         if not is_int(limit) or not 1 <= limit <= 100:
-            return error_payload(CliError("usage", "limit は1〜100", EXIT_USAGE))
+            return error_payload(CliError("usage", t("limit は1〜100", "limit must be 1-100"), EXIT_USAGE))
         if not is_int(offset) or not 0 <= offset <= MAX_OFFSET:
-            return error_payload(CliError("usage", "offset は0〜%d" % MAX_OFFSET, EXIT_USAGE))
+            return error_payload(CliError("usage", t("offset は0〜%d", "offset must be 0-%d") % MAX_OFFSET,
+                                          EXIT_USAGE))
         try:
             result = search_filtered(self.transport, self._sid, query, limit, offset,
                                      self.allow_prefixes, self.checkpoints,
@@ -964,14 +1065,17 @@ class Broker:
         try:
             line = recv_line(conn, MAX_REQUEST_BYTES)
         except (ValueError, OSError):
-            response = error_payload(CliError("usage", "要求が大きすぎるか読み取れません", EXIT_USAGE))
+            response = error_payload(CliError(
+                "usage", t("要求が大きすぎるか読み取れません", "The request is too large or unreadable"),
+                EXIT_USAGE))
         else:
             if not line.strip():
                 return  # 生存確認の接続
             try:
                 request = json.loads(line.decode("utf-8"))
             except (UnicodeDecodeError, ValueError):
-                response = error_payload(CliError("usage", "要求がJSONではありません", EXIT_USAGE))
+                response = error_payload(CliError(
+                    "usage", t("要求がJSONではありません", "The request is not JSON"), EXIT_USAGE))
             else:
                 response = self.handle(request)
         try:
@@ -1024,26 +1128,32 @@ def broker_request(socket_path, request, timeout):
         try:
             client.connect(socket_path)
         except socket.timeout:
-            raise CliError("network", "検索セッションに接続できません（応答なし）", EXIT_NETWORK)
+            raise CliError("network", t("検索セッションに接続できません（応答なし）",
+                                         "Cannot connect to the search session (no answer)"),
+                           EXIT_NETWORK)
         except OSError:
             raise session_required_error()
         client.sendall((json.dumps(request, ensure_ascii=False) + "\n").encode("utf-8"))
         line = recv_line(client, MAX_RESPONSE_BYTES)
     except socket.timeout:
-        raise CliError("network", "検索セッションの応答がありません", EXIT_NETWORK)
+        raise CliError("network", t("検索セッションの応答がありません",
+                                     "No answer from the search session"), EXIT_NETWORK)
     except ValueError:
-        raise CliError("response", "検索セッションの応答が大きすぎます", EXIT_RESPONSE)
+        raise CliError("response", t("検索セッションの応答が大きすぎます",
+                                      "The search session answer is too large"), EXIT_RESPONSE)
     except OSError as exc:
-        raise CliError("network", "検索セッションとの通信に失敗しました（%s）"
+        raise CliError("network", t("検索セッションとの通信に失敗しました（%s）",
+                                    "Talking to the search session failed (%s)")
                        % type(exc).__name__, EXIT_NETWORK)
     finally:
         client.close()
     try:
         response = json.loads(line.decode("utf-8"))
     except (UnicodeDecodeError, ValueError):
-        raise CliError("response", "検索セッションの応答がJSONではありません", EXIT_RESPONSE)
+        raise CliError("response", t("検索セッションの応答がJSONではありません",
+                                      "The search session answer is not JSON"), EXIT_RESPONSE)
     if not isinstance(response, dict) or "ok" not in response:
-        raise CliError("response", "検索セッションの応答形式が想定外です", EXIT_RESPONSE)
+        raise CliError("response", session_format_error(), EXIT_RESPONSE)
     if not response["ok"]:
         error = response.get("error") if isinstance(response.get("error"), dict) else {}
         code = error.get("exit_code")
@@ -1055,24 +1165,37 @@ def broker_request(socket_path, request, timeout):
 
 def build_session_parser():
     parser = _Parser(prog="unisearch session",
-                     description="検索セッション（本人が一度ログインし、期限まで検索だけを受け付ける）")
+                     description=t("検索セッション（本人が一度ログインし、期限まで検索だけを受け付ける）",
+                                   "Search session (a person logs in once; it accepts only "
+                                   "searches until it expires)"))
     sub = parser.add_subparsers(dest="action")
     sub.required = True
-    start = sub.add_parser("start", help="ログインしてセッションを開始（TTY必須）")
+    start = sub.add_parser("start", help=t("ログインしてセッションを開始（TTY必須）",
+                                           "log in and start the session (needs a TTY)"))
     start.add_argument("--allow-prefix", action="append", default=[], metavar="PATH",
-                       required=True, help="検索結果を出す共有パス（例 /archive）。必須・複数可")
-    start.add_argument("--user", help="DSMユーザー名（省略時は対話入力）")
+                       required=True,
+                       help=t("検索結果を出す共有パス（例 /archive）。必須・複数可",
+                              "share path whose results are shown (e.g. /archive); "
+                              "required, repeatable"))
+    start.add_argument("--user", help=t("DSMユーザー名（省略時は対話入力）",
+                                        "DSM user name (asked interactively if omitted)"))
     start.add_argument("--max-age",
-                       help="有効期間（例 8h, 30m, 7d。1m〜90d。既定は設定ファイル、無ければ 8h）")
+                       help=t("有効期間（例 8h, 30m, 7d。1m〜90d。既定は設定ファイル、無ければ 8h）",
+                              "how long it lasts (e.g. 8h, 30m, 7d; 1m-90d; default: the "
+                              "settings file, else 8h)"))
     start.add_argument("--keepalive",
-                       help="セッション維持の検索間隔（例 10m。0で無効。既定は設定ファイル、無ければ 10m）")
+                       help=t("セッション維持の検索間隔（例 10m。0で無効。既定は設定ファイル、無ければ 10m）",
+                              "interval of keep-alive searches (e.g. 10m; 0 turns it off; "
+                              "default: the settings file, else 10m)"))
     start.add_argument("--timeout", type=float,
-                       help="HTTPタイムアウト秒（既定は設定ファイル、無ければ45）")
+                       help=t("HTTPタイムアウト秒（既定は設定ファイル、無ければ45）",
+                              "HTTP timeout in seconds (default: the settings file, else 45)"))
     start.add_argument("--foreground", action="store_true",
-                       help="バックグラウンドに回らずこの端末で動かす（検証用）")
-    status = sub.add_parser("status", help="セッションの状態を表示")
+                       help=t("バックグラウンドに回らずこの端末で動かす（検証用）",
+                              "run in this terminal instead of the background (for testing)"))
+    status = sub.add_parser("status", help=t("セッションの状態を表示", "show the session state"))
     status.add_argument("--json", action="store_true")
-    sub.add_parser("stop", help="セッションを終了してログアウト")
+    sub.add_parser("stop", help=t("セッションを終了してログアウト", "stop the session and log out"))
     return parser
 
 
@@ -1099,34 +1222,35 @@ def session_start(args, transport, prompter, stdout, state_dir, daemonize, setti
     for prefix in args.allow_prefix:
         cleaned = normalize_prefix(prefix)
         if cleaned is None:
-            raise CliError("usage", "--allow-prefix は / で始まる共有パス（/ 単独や .. は不可）: %s"
-                           % prefix, EXIT_USAGE)
+            raise CliError("usage", prefix_error() % prefix, EXIT_USAGE)
         prefixes.append(cleaned)
     max_age = settings["session_max_age"]
     if args.max_age is not None:
         max_age = convert_setting("--max-age", args.max_age,
-                                  SERVER_SETTINGS["session_max_age"], "引数")
+                                  SERVER_SETTINGS["session_max_age"], t("引数", "argument"))
     keepalive = settings["session_keepalive"]
     if args.keepalive is not None:
         keepalive = parse_duration(args.keepalive)
     if keepalive is None or (keepalive != 0 and not 60 <= keepalive <= max_age):
-        raise CliError("usage", "keepalive は 0 または 1m〜有効期間", EXIT_USAGE)
+        raise CliError("usage", t("keepalive は 0 または 1m〜有効期間",
+                                  "keepalive must be 0 or from 1m to the session length"),
+                       EXIT_USAGE)
     http_timeout = args.timeout if args.timeout is not None else settings["http_timeout"]
     if not 0 < http_timeout <= 120:
-        raise CliError("usage", "--timeout は0より大きく120以下", EXIT_USAGE)
+        raise CliError("usage", t("--timeout は0より大きく120以下",
+                                  "--timeout must be more than 0 and at most 120"), EXIT_USAGE)
 
     ensure_private_dir(state_dir)
     socket_path = socket_path_in(state_dir)
     if os.path.lexists(socket_path) and socket_is_live(socket_path):
-        raise CliError("session_running",
-                       "検索セッションはすでに動いています（unisearch session status）",
-                       EXIT_SESSION_STATE)
+        raise session_running_error()
 
     transport = transport or HttpTransport(http_timeout)
     username = args.user or prompter.username()
     if not username:
-        raise CliError("usage", "ユーザー名が空です", EXIT_USAGE)
-    password, otp = ask_credentials(prompter, username, "検索セッションの開始")
+        raise CliError("usage", t("ユーザー名が空です", "The user name is empty"), EXIT_USAGE)
+    password, otp = ask_credentials(prompter, username,
+                                   t("検索セッションの開始", "start a search session"))
     try:
         sid = login(transport, username, password, otp)
     finally:
@@ -1141,14 +1265,19 @@ def session_start(args, transport, prompter, stdout, state_dir, daemonize, setti
                     scan_time_budget=settings["scan_time_budget"],
                     scan_max_pages=settings["scan_max_pages"])
     sid = None
-    print("検索セッションを開始しました。期限: %s（UTC）／対象: %s"
+    print(t("検索セッションを開始しました。期限: %s（UTC）／対象: %s",
+            "Search session started. Expires: %s (UTC) / Scope: %s")
           % (utc_text(broker.expires_at), ", ".join(prefixes)), file=stdout)
-    print("1回の検索は最長 %d 秒です。エージェント側の待ち時間（nas-search の timeout）は"
-          "これより長くしてください。"
+    print(t("1回の検索は最長 %d 秒です。エージェント側の待ち時間（nas-search の timeout）は"
+            "これより長くしてください。",
+            "One search takes at most %d seconds. Make the agent's wait time (the nas-search "
+            "timeout) longer than this.")
           % search_time_limit(broker.scan_time_budget, http_timeout), file=stdout)
     if max_age > LONG_SESSION:
-        print("注意: DSM 側のログインがこの期間もつかは確認されていません。"
-              "DSM 側で先に切れた場合、検索が3回続けて失敗した時点でセッションを終了します。",
+        print(t("注意: DSM 側のログインがこの期間もつかは確認されていません。"
+                "DSM 側で先に切れた場合、検索が3回続けて失敗した時点でセッションを終了します。",
+                "Note: it is not confirmed that the DSM login lasts this long. If DSM ends it "
+                "first, the session stops after 3 searches in a row fail."),
               file=stdout)
     if hasattr(stdout, "flush"):
         stdout.flush()
@@ -1177,21 +1306,23 @@ def session_main(argv, transport, prompter, stdout, stderr, state_dir, daemonize
                 print(json.dumps({"schema_version": SCHEMA_VERSION, "session": status},
                                  ensure_ascii=False), file=stdout)
             else:
-                print("検索セッション: 動作中／期限 %s（UTC、残り %d 分）／対象 %s／検索 %d 回"
+                print(t("検索セッション: 動作中／期限 %s（UTC、残り %d 分）／対象 %s／検索 %d 回",
+                        "Search session: running / expires %s (UTC, %d min left) / scope %s / "
+                        "%d searches")
                       % (status["expires_utc"], status["remaining_seconds"] // 60,
                          ", ".join(status["allow_prefixes"]), status["searches"]), file=stdout)
             return EXIT_OK
         broker_request(socket_path, {"op": "stop"}, 15)
-        print("検索セッションを終了しました", file=stdout)
+        print(t("検索セッションを終了しました", "Search session stopped"), file=stdout)
         return EXIT_OK
     except CliError as exc:
         emit_error(exc, as_json, stderr)
         return exc.exit_code
     except KeyboardInterrupt:
-        emit_error(CliError("interrupted", "中断されました", EXIT_INTERRUPTED), as_json, stderr)
+        emit_error(CliError("interrupted", t("中断されました", "Interrupted"), EXIT_INTERRUPTED), as_json, stderr)
         return EXIT_INTERRUPTED
     except Exception as exc:  # 内容は出さない
-        emit_error(CliError("internal", "内部エラー（%s）" % type(exc).__name__, EXIT_INTERNAL),
+        emit_error(CliError("internal", t("内部エラー（%s）", "Internal error (%s)") % type(exc).__name__, EXIT_INTERNAL),
                    as_json, stderr)
         return EXIT_INTERNAL
 
@@ -1204,39 +1335,46 @@ def session_main(argv, transport, prompter, stdout, stderr, state_dir, daemonize
 #   status
 # 出力は常に JSON。資格情報の入力は求めない。
 
-GATEWAY_USAGE = "使えるのは `search <検索語> [--limit N] [--offset N]` と `status` だけです"
+def gateway_usage():
+    return t("使えるのは `search <検索語> [--limit N] [--offset N]` と `status` だけです",
+             "Only `search <words> [--limit N] [--offset N]` and `status` are allowed")
+
+
+def bad_query_error():
+    return t("検索語が不正です", "Invalid search words")
 
 
 class _GatewayParser(argparse.ArgumentParser):
     def error(self, message):
-        raise CliError("usage", "%s（%s）" % (GATEWAY_USAGE, message), EXIT_USAGE)
+        raise CliError("usage", t("%s（%s）", "%s (%s)") % (gateway_usage(), message), EXIT_USAGE)
 
 
 def parse_gateway_command(command):
     try:
         tokens = shlex.split(command or "")
     except ValueError:
-        raise CliError("usage", GATEWAY_USAGE, EXIT_USAGE)
+        raise CliError("usage", gateway_usage(), EXIT_USAGE)
     if tokens == ["status"]:
         return "status", None
     if not tokens or tokens[0] != "search":
-        raise CliError("usage", GATEWAY_USAGE, EXIT_USAGE)
+        raise CliError("usage", gateway_usage(), EXIT_USAGE)
     parser = _GatewayParser(prog="search", add_help=False, allow_abbrev=False)
     parser.add_argument("query")
     parser.add_argument("--limit", type=int, default=10)
     parser.add_argument("--offset", type=int, default=0)
     args = parser.parse_args(tokens[1:])
     if not args.query.strip() or len(args.query) > MAX_QUERY_CHARS:
-        raise CliError("usage", "検索語が不正です", EXIT_USAGE)
+        raise CliError("usage", bad_query_error(), EXIT_USAGE)
     if not 1 <= args.limit <= 100:
-        raise CliError("usage", "--limit は1〜100", EXIT_USAGE)
+        raise CliError("usage", t("--limit は1〜100", "--limit must be 1-100"), EXIT_USAGE)
     if not 0 <= args.offset <= MAX_OFFSET:
-        raise CliError("usage", "--offset は0〜%d" % MAX_OFFSET, EXIT_USAGE)
+        raise CliError("usage", t("--offset は0〜%d", "--offset must be 0-%d") % MAX_OFFSET, EXIT_USAGE)
     return "search", {"query": args.query, "limit": args.limit, "offset": args.offset}
 
 
 def gateway_main(command, state_dir, stdout, stderr):
-    # 設定ファイルは読まない。待ち時間は gateway_wait() の固定値で、検索の中身は検索セッションが決める
+    # 設定ファイルからは lang だけを読む（main で済ませている）。待ち時間は gateway_wait() の固定値で、
+    # 検索の中身は検索セッションが決める
     socket_path = socket_path_in(state_dir)
     try:
         op, params = parse_gateway_command(command)
@@ -1250,14 +1388,14 @@ def gateway_main(command, state_dir, stdout, stderr):
         request.update(params)
         result = broker_request(socket_path, request, wait).get("result")
         if not isinstance(result, dict):
-            raise CliError("response", "検索セッションの応答形式が想定外です", EXIT_RESPONSE)
+            raise CliError("response", session_format_error(), EXIT_RESPONSE)
         print(json.dumps(result, ensure_ascii=False), file=stdout)
         return EXIT_OK
     except CliError as exc:
         emit_error(exc, True, stderr)
         return exc.exit_code
     except Exception as exc:  # 内容は出さない
-        emit_error(CliError("internal", "内部エラー（%s）" % type(exc).__name__, EXIT_INTERNAL),
+        emit_error(CliError("internal", t("内部エラー（%s）", "Internal error (%s)") % type(exc).__name__, EXIT_INTERNAL),
                    True, stderr)
         return EXIT_INTERNAL
 
@@ -1272,6 +1410,7 @@ def main(argv=None, transport=None, prompter=None, stdout=None, stderr=None,
     environ = os.environ if environ is None else environ
     state_dir = state_dir_from(environ)
     config_path = config_path_from(environ)
+    set_language(peek_language(config_path))
     if argv == ["--agent-gateway"]:
         return gateway_main(environ.get("SSH_ORIGINAL_COMMAND", ""), state_dir, stdout, stderr)
     if argv[:1] == ["session"]:
@@ -1294,11 +1433,11 @@ def main(argv=None, transport=None, prompter=None, stdout=None, stderr=None,
         emit_error(exc, as_json, stderr)
         return exc.exit_code
     except KeyboardInterrupt:
-        emit_error(CliError("interrupted", "中断されました", EXIT_INTERRUPTED),
+        emit_error(CliError("interrupted", t("中断されました", "Interrupted"), EXIT_INTERRUPTED),
                    as_json, stderr)
         return EXIT_INTERRUPTED
     except Exception as exc:  # 想定外。型名のみ出し、内容（秘密を含み得る）は出さない
-        emit_error(CliError("internal", "内部エラー（%s）" % type(exc).__name__,
+        emit_error(CliError("internal", t("内部エラー（%s）", "Internal error (%s)") % type(exc).__name__,
                             EXIT_INTERNAL), as_json, stderr)
         return EXIT_INTERNAL
 

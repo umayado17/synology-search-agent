@@ -155,6 +155,47 @@ PY
 - 1日に数回、実際に検索して結果が返るか確かめる
 - 終わったら、NAS の `~/.unisearch/broker.log` で、keepalive の失敗やログアウトの記録を確かめる（イベント名と回数だけが書かれています）
 
+## 7. v0.8.0 の確認（英語の表示）
+
+v0.7.0 から変えたのは表示の文だけです（`lang` の設定）。7-1〜7-3 はパスワードも OTP も要りません。動いている検索セッションは止めずに確かめられます（セッションは始めたときのプログラムのまま動き続けます）。
+
+### 7-1. 入れ替え
+
+[agent-setup.md](agent-setup.md) の手順1で `unisearch` を置き直し、SHA-256 が一致することを確かめます。エージェント側の `nas-search` も置き直します。
+
+| 確認 | 期待 |
+|---|---|
+| `~/.local/bin/unisearch --version` | `unisearch 0.8.0` |
+| `nas-search --version`（エージェント側） | `nas-search 0.5.0` |
+| `nas-search --status`（入れ替えの前から動いているセッションで） | exit 0。`searches` が増え続けている |
+| `nas-search "<結果がある検索語>" --limit 3` | exit 0。結果が返る |
+
+### 7-2. NAS 側の英語の表示
+
+試しの設定ファイルを別に作るので、いつもの `server.conf` は変えません。
+
+```bash
+ssh <ssh-user>@<nas-host> 'c=$(mktemp) && printf "lang = en\n" > "$c" && UNISEARCH_CONFIG="$c" ~/.local/bin/unisearch --help | head -3; UNISEARCH_CONFIG="$c" SSH_ORIGINAL_COMMAND=ls ~/.local/bin/unisearch --agent-gateway; echo "exit=$?"; rm -f "$c"'
+```
+
+期待: ヘルプが英語。2つ目は `"type": "usage"` で、`message` が `Only` から始まる英語、`exit=2`。
+
+### 7-3. エージェント側の英語の表示
+
+```bash
+UNISEARCH_LANG=en nas-search; echo "exit=$?"
+```
+
+期待: `"message": "Give search words"`、`exit=2`。`UNISEARCH_LANG` を外すと日本語に戻る。
+
+### 7-4. 入力欄（任意。本人が入力）
+
+```bash
+ssh -t <ssh-user>@<nas-host> 'c=$(mktemp) && printf "lang = en\n" > "$c"; UNISEARCH_CONFIG="$c" ~/.local/bin/unisearch --no-session --user search-agent --json test --limit 1; echo "exit=$?"; rm -f "$c"'
+```
+
+期待: 「DSM password for search-agent:」と「2-step verification code for search-agent (6 digits):」が出て、検索できる。
+
 ## 記録テンプレート
 
 ```
@@ -170,4 +211,5 @@ PY
 手順6-4: 索引の更新にかかった時間 / 重複 N 件 / 取りこぼしの疑い N 件
 手順6-5: 各 exit / last_error
 手順6-6: 期間 / 最後まで検索できたか / keepalive の失敗の回数
+手順7: version / 入れ替え後も検索セッションが動くか / 英語の表示（NAS・エージェント）/ 入力欄
 ```

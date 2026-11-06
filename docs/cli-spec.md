@@ -1,4 +1,4 @@
-# unisearch CLI 仕様（v0.7.0 / JSON schema_version 1）
+# unisearch CLI 仕様（v0.8.0 / JSON schema_version 1）
 
 この文書が CLI の外部契約です。変更時は `tests/test_unisearch.py` を同時に更新してください。
 
@@ -137,6 +137,7 @@ session_keepalive = 10m
 http_timeout = 45
 scan_time_budget = 40
 scan_max_pages = 20
+lang = ja
 ```
 
 | 名前 | 既定 | 範囲（コードで固定） | 意味 |
@@ -146,6 +147,7 @@ scan_max_pages = 20
 | `http_timeout` | 45 | 1〜120 秒 | DSM API 1回の待ち時間（`--timeout` の既定値） |
 | `scan_time_budget` | 40 | 5〜120 秒 | 範囲を絞るとき、1回の検索で読み進める時間の上限 |
 | `scan_max_pages` | 20 | 1〜100 | 同じく、1回の検索で API を呼ぶ回数の上限（1回100件） |
+| `lang` | ja | ja / en | 表示の言語（v0.8.0〜）。下の「表示の言語」 |
 
 - 優先順: コマンドライン引数 ＞ 設定ファイル ＞ 既定値
 - 1回の検索の最長は、検索セッションを始めたときの値で `scan_time_budget + http_timeout + 10` 秒です（既定 95 秒）。`session start` が開始時に表示します。`--timeout` で `http_timeout` を上書きした場合は、その値で計算します
@@ -168,13 +170,26 @@ status                                        → stdout に {"schema_version":1
 - それ以外（`--raw`・`--allow-prefix`・`--user`・`stop`・未知の語・`;` など）はすべて終了コード 2
 - エラーは stderr に JSON 1行。セッションが無ければ終了コード 8（`session_required`）。資格情報の入力は求めない
 
-## エージェント側コマンド `clients/nas-search`（v0.4.0）
+## 表示の言語（v0.8.0〜）
+
+`message`・ヘルプ・端末向けの表示・パスワードの入力欄を、日本語（`ja`、既定）か英語（`en`）で出します。
+
+- NAS 側: `server.conf` の `lang`。SSH 入口（`--agent-gateway`）は呼ばれるたびに `lang` だけを読む（ほかの設定は読まない。読めない・不正なときは日本語）。検索セッションの中で作る `message` は、`session start` のときの言語のまま
+- エージェント側: 環境変数 `UNISEARCH_LANG` ＞ `client.conf` の `lang` ＞ `ja`。NAS から返ってきた `message` は、そのまま渡す（NAS 側の言語）
+- JSON のキー、`error.type`、`api_code`、終了コードは、言語によらず同じ。エージェントは `message` の文面で判断しないこと
+- `lang` に ja / en 以外を書くと exit 2（`type: config`）
+
+```
+{"schema_version": 1, "error": {"type": "auth", "message": "Login failed (code 404): possibly a failed 2-step verification code", "api_code": 404, "exit_code": 3}}
+```
+
+## エージェント側コマンド `clients/nas-search`（v0.5.0）
 
 入口（`--agent-gateway`）を ssh で呼ぶ薄いラッパー。出力・終了コードは入口と同じで、加えて:
 
 - `--max-results N`（1〜1000）: ページを送り、最大 N 件を1つの JSON にまとめる（`pages_fetched` を追加、最大20ページ）。1回に頼む件数は `min(100, 残り件数)` なので、取った結果を捨てない。最後の `next_offset` から続きを取れる
 - `--status` は検索語・`--max-results`・`--offset` と併用できない（exit 2）
 - 設定: `--host`/`--key` > 環境変数 `UNISEARCH_HOST`/`UNISEARCH_KEY` > `~/.config/unisearch/client.conf`（`UNISEARCH_CLIENT_CONFIG` で変更可）。未設定は exit 2（`type: config`）
-- `client.conf` に書ける名前: `host`、`key`、`timeout`（1回の呼び出しの上限秒、5〜600、既定 260。`--timeout` が優先）、`connect_timeout`（ssh の接続待ち秒、1〜120、既定 15）。知らない名前・パスワードなどは exit 2
+- `client.conf` に書ける名前: `host`、`key`、`timeout`（1回の呼び出しの上限秒、5〜600、既定 260。`--timeout` が優先）、`connect_timeout`（ssh の接続待ち秒、1〜120、既定 15）、`lang`（ja / en、既定 ja。`UNISEARCH_LANG` が優先）。知らない名前・パスワードなどは exit 2
 - ssh 自体の失敗（ssh の終了コード 255）は exit 5（`type: ssh`）。パスワード認証は試さない
 - 送る文字列は `search --limit N --offset N -- <shlex.quote(検索語)>`

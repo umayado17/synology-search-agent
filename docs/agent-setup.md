@@ -37,7 +37,7 @@ ssh -t <ssh-user>@<nas-host> '~/.local/bin/unisearch session start --user search
 SSH のパスワード（<ssh-user>）→ DSM パスワード（search-agent）→ 2FA コード（search-agent）の順に入力します。
 DSM の入力の前に「DSM アカウント: search-agent」と表示されます。SSH のアカウントではなく、こちらのパスワードとコードを入れてください。
 
-期間を毎回指定したくないときは、NAS の `~/.config/unisearch/server.conf` に書いておけます（例 `session_max_age = 7d`。最大 90d）。24時間を超える期間で DSM 側のログインがもつかは未確認です。
+期間を毎回指定したくないときは、NAS の `~/.config/unisearch/server.conf` に書いておけます（例 `session_max_age = 7d`。最大 90d。表示を英語にするなら `lang = en`）。24時間を超える期間で DSM 側のログインがもつかは未確認です。
 「検索セッションを開始しました」と出たら、SSH を閉じてかまいません。
 
 ## 3. SSH を閉じても残っているか確認（初回は必ず）
@@ -87,7 +87,7 @@ ssh -i ~/.ssh/unisearch_agent -o IdentitiesOnly=yes <ssh-user>@<nas-host> status
 ```bash
 mkdir -p ~/.local/bin ~/.config/unisearch
 cp clients/nas-search ~/.local/bin/nas-search && chmod 755 ~/.local/bin/nas-search
-printf 'host=<ssh-user>@<nas-host>\nkey=~/.ssh/unisearch_agent\n# timeout=260\n' > ~/.config/unisearch/client.conf
+printf 'host=<ssh-user>@<nas-host>\nkey=~/.ssh/unisearch_agent\n# timeout=260\n# lang=en\n' > ~/.config/unisearch/client.conf
 chmod 600 ~/.config/unisearch/client.conf
 ```
 
