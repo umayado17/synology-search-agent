@@ -16,10 +16,9 @@ jobs:
         include:
           - os: ubuntu-22.04   # NAS と同じ Python 3.8
             python: "3.8"
-          - os: ubuntu-latest
+          - os: ubuntu-latest  # エージェント側（Linux）の新しい Python
             python: "3.12"
-          - os: macos-latest
-            python: "3.12"
+          # Mac は動かす場所ではないので CI に入れない。手元で確かめる場合は README の手順で
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
