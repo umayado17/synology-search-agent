@@ -9,6 +9,8 @@ A small CLI that searches the **existing Universal Search index** (full text) of
 - **Read-only.** It never changes files, the index or shared folders.
 - Runs on the Python 3.8+ standard library only (no extra packages).
 
+![Demo: an AI agent uses nas-search to find the files for a project, including ones found by their text, and lists them newest first (fictional data; the Japanese query means "Kamome project")](docs/images/demo.gif)
+
 > [!WARNING]
 > This tool uses a Web API that Synology does not publish (`SYNO.Finder.FileIndexing.Search`). A DSM update may break it without notice. This is an unofficial tool and is not affiliated with Synology. Synology, DSM and Universal Search are trademarks of Synology Inc.
 

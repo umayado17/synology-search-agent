@@ -9,6 +9,8 @@ Synology NAS の **Universal Search（全文検索）の既存インデックス
 - **読み取り専用**。ファイル・インデックス・共有フォルダは変更しません
 - Python 3.8 以上の標準ライブラリだけで動きます（追加パッケージ不要）
 
+![AI エージェントが nas-search で「かもめ計画」の資料を探し、本文の一致も含めて新しい順に答えるデモ（中身は架空の資料）](docs/images/demo.gif)
+
 > [!WARNING]
 > Synology が公開していない Web API（`SYNO.Finder.FileIndexing.Search`）を使っています。DSM の更新で予告なく動かなくなる可能性があります。Synology 社とは関係のない非公式ツールです。Synology、DSM、Universal Search は Synology Inc. の商標です。
 
