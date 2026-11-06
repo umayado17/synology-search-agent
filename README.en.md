@@ -10,7 +10,7 @@ A small CLI that searches the **existing Universal Search index** (full text) of
 - Runs on the Python 3.8+ standard library only (no extra packages).
 
 > [!WARNING]
-> This tool uses a Web API that Synology does not publish (`SYNO.Finder.FileIndexing.Search`). A DSM update may break it without notice. This is an unofficial tool and is not affiliated with Synology.
+> This tool uses a Web API that Synology does not publish (`SYNO.Finder.FileIndexing.Search`). A DSM update may break it without notice. This is an unofficial tool and is not affiliated with Synology. Synology, DSM and Universal Search are trademarks of Synology Inc.
 
 > [!NOTE]
 > The detailed documents under `docs/` are in Japanese. Messages printed by the commands are also in Japanese. Agents should rely on the JSON fields (`error.type`) and exit codes, which are stable and documented below.
@@ -20,6 +20,8 @@ A small CLI that searches the **existing Universal Search index** (full text) of
 `find` and `grep` walk the files on every search. A file-name search can be fast enough, but a full-text search over a large share is not practical. Synology Universal Search already keeps an index that includes file contents, but there is no public way to use it from a program.
 
 This tool does not build a new index. It **lets an AI agent use the Universal Search index that already exists.** The agent gets only short candidates (name, path, size, date) and opens only the files it needs. It hands the agent the ability to search, and nothing else: no root, no sudo, no shell.
+
+The idea that this API can be called came from [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli) (2021). No code from that project is used here (it has no license); only the fact that the API exists and can be called.
 
 The background story (in Japanese) is in [docs/background.md](docs/background.md).
 
@@ -162,7 +164,7 @@ The steps for checking on a real NAS are in [docs/nas-verification.md](docs/nas-
 
 ## See also
 
-- [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)
+- [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli): an earlier command-line tool that calls the Universal Search API from a shell. It is what started this project.
 
 ## Changes and security
 

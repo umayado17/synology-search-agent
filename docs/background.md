@@ -50,7 +50,7 @@ Synology の Universal Search（パッケージ名 `SynoFinder`）は、DSM 7 �
 
 DSM の内部には、索引を検索する API `SYNO.Finder.FileIndexing.Search`（version 1）があります。本文（`SYNOMDTextContent`）にも重みをつけて検索でき、結果はパス・名前・サイズ・更新日を含む JSON で返ります。ただし、公開されていない仕様です。
 
-先に作られた例として、[atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)（2021年）がありました。2021年5月から更新されていないため、スクリプトはそのまま使っていません。参考にしたのは、「この API があって、呼び出せる」という点です。
+先に作られた例として、[atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)（2021年）がありました。2021年5月から更新されておらず、ライセンスも付いていないため、スクリプトは使っていません（コードは写していません）。参考にしたのは、「この API があって、呼び出せる」という点です。
 
 作者の NAS で試したこと:
 

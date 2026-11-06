@@ -10,13 +10,15 @@ Synology NAS の **Universal Search（全文検索）の既存インデックス
 - Python 3.8 以上の標準ライブラリだけで動きます（追加パッケージ不要）
 
 > [!WARNING]
-> Synology が公開していない Web API（`SYNO.Finder.FileIndexing.Search`）を使っています。DSM の更新で予告なく動かなくなる可能性があります。Synology 社とは関係のない非公式ツールです。
+> Synology が公開していない Web API（`SYNO.Finder.FileIndexing.Search`）を使っています。DSM の更新で予告なく動かなくなる可能性があります。Synology 社とは関係のない非公式ツールです。Synology、DSM、Universal Search は Synology Inc. の商標です。
 
 ## なぜ作ったか
 
 `find` や `grep` は、検索のたびにファイルを走査します。ファイル名だけなら速いこともありますが、本文の検索はデータが大きいと使えません。Synology の Universal Search は、本文まで含めた索引をすでに作っています。ところが、それをプログラムから使う公開された入口がありません。
 
 このツールは、新しく索引を作るのではなく、**すでにある Universal Search の索引を AI エージェントから使えるようにします**。エージェントは名前・パス・更新日などの候補だけを受け取り、必要なファイルだけを開きます。root や sudo を渡さず、検索だけを渡すように作っています。
+
+この API を呼び出せることは、[atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)（2021年）で知りました。このリポジトリは、あちらのコードを使っていません（あちらにはライセンスが付いていないため）。参考にしたのは、API があって呼び出せるという点だけです。
 
 くわしい経緯は [docs/background.md](docs/background.md) にあります。
 
@@ -129,7 +131,7 @@ python3 -m unittest discover -s tests -v
 
 ## 参考
 
-- [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)
+- [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)：Universal Search の API をシェルから呼ぶ、先に作られた例。このツールのきっかけです
 
 ## 変更履歴とセキュリティ
 
