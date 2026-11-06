@@ -13,7 +13,9 @@ import unittest
 import unittest.mock
 
 from test_client import CLIENT, FakeRunner, client
-from test_unisearch import SCRIPT, FakePrompter, FakeTransport, cli
+from test_unisearch import ROOT, SCRIPT, FakePrompter, FakeTransport, cli
+
+MCP = os.path.join(ROOT, "clients", "nas-search-mcp")
 
 JAPANESE = re.compile(r"[぀-ヿ一-鿿]")
 
@@ -51,8 +53,11 @@ class AllMessagesTranslatedTest(unittest.TestCase):
     def test_client(self):
         self.assertEqual(untranslated(CLIENT, ("lang は ja か en / lang must be ja or en",)), [])
 
+    def test_mcp(self):
+        self.assertEqual(untranslated(MCP), [])
+
     def test_english_side_has_no_japanese(self):
-        for path in (SCRIPT, CLIENT):
+        for path in (SCRIPT, CLIENT, MCP):
             with open(path, encoding="utf-8") as handle:
                 tree = ast.parse(handle.read())
             for node in ast.walk(tree):

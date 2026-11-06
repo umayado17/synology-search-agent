@@ -1,4 +1,4 @@
-# unisearch CLI 仕様（v0.8.0 / JSON schema_version 1）
+# unisearch CLI 仕様（v0.9.0 / JSON schema_version 1）
 
 この文書が CLI の外部契約です。変更時は `tests/test_unisearch.py` を同時に更新してください。
 
@@ -183,7 +183,7 @@ status                                        → stdout に {"schema_version":1
 {"schema_version": 1, "error": {"type": "auth", "message": "Login failed (code 404): possibly a failed 2-step verification code", "api_code": 404, "exit_code": 3}}
 ```
 
-## エージェント側コマンド `clients/nas-search`（v0.5.0）
+## エージェント側コマンド `clients/nas-search`（v0.6.0）
 
 入口（`--agent-gateway`）を ssh で呼ぶ薄いラッパー。出力・終了コードは入口と同じで、加えて:
 
@@ -193,3 +193,16 @@ status                                        → stdout に {"schema_version":1
 - `client.conf` に書ける名前: `host`、`key`、`timeout`（1回の呼び出しの上限秒、5〜600、既定 260。`--timeout` が優先）、`connect_timeout`（ssh の接続待ち秒、1〜120、既定 15）、`lang`（ja / en、既定 ja。`UNISEARCH_LANG` が優先）。知らない名前・パスワードなどは exit 2
 - ssh 自体の失敗（ssh の終了コード 255）は exit 5（`type: ssh`）。パスワード認証は試さない
 - 送る文字列は `search --limit N --offset N -- <shlex.quote(検索語)>`
+
+## MCP サーバー `clients/nas-search-mcp`（v0.9.0〜）
+
+MCP（stdio、JSON-RPC 2.0、1行に1つ）で、`nas-search` を道具として出す。中では同じディレクトリの `nas-search`（環境変数 `UNISEARCH_NAS_SEARCH` で変更可）を呼ぶ。設定・鍵・言語（`UNISEARCH_LANG` ＞ `client.conf` の `lang`）は `nas-search` と同じ。
+
+- 対応する版: `2025-11-25`、`2025-06-18`、`2025-03-26`、`2024-11-05`。アプリが頼んだ版がこの中にあればそれを、無ければ `2025-11-25` を返す
+- 受け付けるもの: `initialize`、`ping`、`tools/list`、`tools/call`。通知（`notifications/initialized` など）には返事をしない。ほかは JSON-RPC のエラー（`-32601`）。知らない道具は `-32602`
+- 道具 `search`: `query`（必須、1〜1000文字）、`limit`（1〜100、既定 20）、`offset`（0〜100000、既定 0）、`max_results`（1〜1000）。`nas-search [--limit N] [--offset N] [--max-results N] -- <query>` を呼ぶ
+- 道具 `status`: 引数なし。`nas-search --status` を呼ぶ
+- 結果: `content` に `nas-search` の JSON（1つの text）。版が `2025-06-18` 以降なら、同じものを `structuredContent` にも入れる
+- エラー: `isError: true` で、中身は `{"schema_version":1,"error":{"type","message","api_code","exit_code"}}`。`nas-search` のエラーはそのまま渡す。引数の誤りは `nas-search` を呼ばずに `type: usage`、`exit_code: 2`
+- 長い検索: アプリが `_meta.progressToken` を付けたときは、10 秒ごとに `notifications/progress` を送る。検索の間に届いた `ping` には答え、その検索の `notifications/cancelled` と stdin の終わりでは `nas-search` を止めて返事をしない。ほかの要求は検索のあとで順に処理する。700 秒を超えたら止めて `type: ssh`、`exit_code: 5`
+- stdout には MCP のやり取りだけを出す

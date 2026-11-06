@@ -51,6 +51,7 @@ AI agent ──ssh (search-only key)──▶ NAS: unisearch --agent-gateway
 |---|---|
 | [`unisearch`](unisearch) | Runs on the NAS. Interactive search, the search session, and the SSH entry point |
 | [`clients/nas-search`](clients/nas-search) | Runs on the agent's machine. Builds the ssh call and returns the result |
+| [`clients/nas-search-mcp`](clients/nas-search-mcp) | Offers the same search as MCP tools (`search`, `status`); runs `nas-search` inside |
 | [`skills/nas-search/SKILL.md`](skills/nas-search/SKILL.md) | Instructions for agents (Claude Code skill format) |
 | [`scripts/remote-run.sh`](scripts/remote-run.sh) | Try the CLI without placing any file on the NAS |
 
@@ -95,6 +96,14 @@ You type the DSM user name, password and OTP in the terminal. Each run logs in a
 nas-search "test" --limit 20
 nas-search --status
 ```
+
+Apps without a shell can use it as MCP tools (`clients/nas-search-mcp`). In Claude Code, register it with one line:
+
+```bash
+claude mcp add nas-search -- python3 ~/.local/bin/nas-search-mcp
+```
+
+Other MCP apps start it the same way: command `python3`, argument the path to `nas-search-mcp`, over stdio.
 
 Setup steps are in [docs/agent-setup.md](docs/agent-setup.md) (Japanese; the commands in it can be used as they are).
 

@@ -2,6 +2,11 @@
 
 `unisearch` (runs on the NAS) and `nas-search` (runs on the agent's machine) have their own version numbers. The JSON output has `schema_version: 1` in both.
 
+## unisearch 0.9.0 / nas-search 0.6.0 (unreleased)
+
+- **MCP server.** New `clients/nas-search-mcp` offers `search` and `status` as MCP tools (stdio), so MCP apps such as Claude Code can search without a shell. It runs `nas-search` next to it, so the settings, key, JSON and exit codes are the same. Standard library only. It sends progress notifications during long searches when the app asks for them, and stops the search when the app cancels it.
+- No change on the NAS side apart from the version number; reinstalling `unisearch` is not needed.
+
 ## unisearch 0.8.0 / nas-search 0.5.0 (2026-11-07)
 
 First public release (beta).

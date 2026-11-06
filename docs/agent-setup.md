@@ -111,6 +111,30 @@ mkdir -p ~/.claude/skills && ln -s "$PWD/skills/nas-search" ~/.claude/skills/nas
 
 他のエージェントには `skills/nas-search/SKILL.md` の本文を指示として渡してください。
 
+### MCP で使う場合（v0.9.0〜）
+
+シェルを使えないアプリや、MCP で道具を渡したいときは、`nas-search` と同じ場所に `nas-search-mcp` を置きます。設定（`client.conf`）と鍵は `nas-search` のものをそのまま使います。
+
+```bash
+cp clients/nas-search-mcp ~/.local/bin/nas-search-mcp && chmod 755 ~/.local/bin/nas-search-mcp
+```
+
+Claude Code:
+
+```bash
+claude mcp add nas-search -- python3 ~/.local/bin/nas-search-mcp
+```
+
+ほかの MCP アプリ（設定ファイルに書く形）では、`mcpServers` に次を足します。`~` が使えないアプリがあるので、フルパスで書きます。`python3` が見つからないときは、`which python3` で出るパスに変えます。
+
+```json
+{"mcpServers": {"nas-search": {"command": "python3", "args": ["/Users/<you>/.local/bin/nas-search-mcp"]}}}
+```
+
+- 道具は `search`（`query`、`limit`、`offset`、`max_results`）と `status` の2つだけです。どちらも読むだけで、NAS のファイルは変えません
+- 結果とエラーは `nas-search` と同じ JSON です。エラーのときは `isError: true` で、中身は `{"error": {"type", "message", "exit_code"}}`
+- スキル（SKILL.md）は要りません。使い方の説明は MCP の道具の説明に入っています
+
 - `nas-search` はパスワード認証を一切試しません（`BatchMode`・`PasswordAuthentication=no`）。鍵の不備で NAS 側にログイン失敗が積み上がることを防ぐためです
 - 検索語は `--` の後に引用して送るので、`;` `$()` 引用符 改行 `-` で始まる語もそのまま届きます
 

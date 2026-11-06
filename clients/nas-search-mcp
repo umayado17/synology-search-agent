@@ -1,0 +1,391 @@
+#!/usr/bin/env python3
+"""nas-search-mcp: nas-search を MCP の道具（search・status）として出す小さなサーバー。
+
+    python3 nas-search-mcp          # MCP のアプリが stdio で起動する
+
+中では同じディレクトリの nas-search を呼ぶだけで、設定（client.conf・環境変数）・鍵・
+出力の JSON・終了コードは nas-search と同じ。NAS 側は何も変えない。標準ライブラリのみ。
+stdout は MCP のやり取りだけに使う（JSON-RPC 2.0、1行に1つ）。
+"""
+import json
+import os
+import queue
+import subprocess
+import sys
+import threading
+import time
+
+VERSION = "0.6.0"
+SCHEMA_VERSION = 1
+# 新しい順。アプリが頼んだ版がこの中にあればそれを、無ければ先頭を返す
+PROTOCOL_VERSIONS = ("2025-11-25", "2025-06-18", "2025-03-26", "2024-11-05")
+STRUCTURED_SINCE = "2025-06-18"  # structuredContent を返し始める版
+
+EXIT_USAGE = 2
+EXIT_NETWORK = 5
+EXIT_RESPONSE = 6
+EXIT_INTERNAL = 1
+
+CALL_TIMEOUT = 700       # nas-search 自身の上限（--timeout は最大 600 秒）より長く
+PROGRESS_INTERVAL = 10   # 長い検索の間、この秒数ごとに進み具合を知らせる（頼まれたときだけ）
+POLL = 0.2
+DEFAULT_CONFIG = os.path.join(os.path.expanduser("~"), ".config", "unisearch", "client.conf")
+
+LANGUAGES = ("ja", "en")
+LANG = "ja"
+
+
+def t(ja, en):
+    return en if LANG == "en" else ja
+
+
+def peek_language(environ):
+    """nas-search と同じ順（UNISEARCH_LANG ＞ client.conf の lang ＞ ja）。不正な値は ja。"""
+    lang = (environ.get("UNISEARCH_LANG") or "").strip().lower()
+    if lang:
+        return lang if lang in LANGUAGES else "ja"
+    try:
+        with open(environ.get("UNISEARCH_CLIENT_CONFIG") or DEFAULT_CONFIG,
+                  encoding="utf-8") as handle:
+            lines = handle.read().splitlines()
+    except (OSError, UnicodeDecodeError):
+        return "ja"
+    for line in lines:
+        name, sep, value = line.strip().partition("=")
+        if sep and name.strip().lower() == "lang" and value.strip().lower() in LANGUAGES:
+            lang = value.strip().lower()
+    return lang or "ja"
+
+
+INSTRUCTIONS = (
+    "Search files on the user's Synology NAS through its Universal Search index (file names "
+    "and indexed text). Read-only: it cannot open, change or delete files, and it only sees "
+    "the folders the user allowed. Results and errors are the same JSON as the nas-search "
+    "command. Rely on error.type and exit_code, not on the message text. If exit_code is 8, "
+    "ask the user to start the search session on the NAS; never try to log in yourself. "
+    "Never ask for passwords or codes, and do not send file names or paths to outside "
+    "services.")
+
+SEARCH_DESCRIPTION = (
+    "Search the NAS by file name and document text. Returns JSON with hits (name, share_path, "
+    "path, size, is_dir, modified_utc) and next_offset. Tell the user locations with "
+    "share_path. total is always null; more results exist when next_offset is not null, so "
+    "pass it as offset to get the next page, or use max_results to collect several pages at "
+    "once. If the index changes between pages, deduplicate by share_path. One search can take "
+    "from a few seconds to several minutes; avoid many calls in a row. If nothing is found, "
+    "try a shorter query or other spellings (full-width/half-width, English/Japanese). "
+    "Errors: exit_code 2 = fix the arguments, 4 = retry once (scan_limit continues where it "
+    "stopped), 5 = NAS or network down, 6 = unexpected response, 8 = no search session (ask "
+    "the user to start it).")
+
+TOOLS = [
+    {
+        "name": "search",
+        "title": "Search the NAS",
+        "description": SEARCH_DESCRIPTION,
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "query": {"type": "string", "minLength": 1, "maxLength": 1000,
+                          "description": "Search words, sent to the NAS as is"},
+                "limit": {"type": "integer", "minimum": 1, "maximum": 100, "default": 20,
+                          "description": "Results per call (1-100)"},
+                "offset": {"type": "integer", "minimum": 0, "maximum": 100000, "default": 0,
+                           "description": "Start position: next_offset from the last result"},
+                "max_results": {"type": "integer", "minimum": 1, "maximum": 1000,
+                                "description": "Page automatically and collect up to this "
+                                               "many results (limit is then ignored)"},
+            },
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+        "annotations": {"readOnlyHint": True, "destructiveHint": False,
+                        "idempotentHint": True, "openWorldHint": False},
+    },
+    {
+        "name": "status",
+        "title": "NAS search session status",
+        "description": "Show the NAS search session: expiry, time left (remaining_seconds), "
+                       "allowed folders, number of searches and the last error.",
+        "inputSchema": {"type": "object", "properties": {}, "additionalProperties": False},
+        "annotations": {"readOnlyHint": True, "destructiveHint": False,
+                        "idempotentHint": True, "openWorldHint": False},
+    },
+]
+
+INT_ARGS = {"limit": (1, 100), "offset": (0, 100000), "max_results": (1, 1000)}
+
+
+class ToolError(Exception):
+    def __init__(self, kind, message, exit_code):
+        super().__init__(message)
+        self.kind = kind
+        self.message = message
+        self.exit_code = exit_code
+
+    def payload(self):
+        return {"schema_version": SCHEMA_VERSION, "error": {
+            "type": self.kind, "message": self.message, "api_code": None,
+            "exit_code": self.exit_code}}
+
+
+def nas_search_argv(name, arguments):
+    """道具の引数を nas-search の引数にする。検索語は必ず `--` の後に置く。"""
+    if not isinstance(arguments, dict):
+        raise ToolError("usage", t("引数はオブジェクトで渡してください",
+                                   "Arguments must be an object"), EXIT_USAGE)
+    if name == "status":
+        if arguments:
+            raise ToolError("usage", t("status に引数はありません", "status takes no arguments"),
+                            EXIT_USAGE)
+        return ["--status"]
+    unknown = sorted(set(arguments) - {"query"} - set(INT_ARGS))
+    if unknown:
+        raise ToolError("usage", t("知らない引数です: %s", "Unknown arguments: %s")
+                        % ", ".join(unknown), EXIT_USAGE)
+    query = arguments.get("query")
+    if not isinstance(query, str) or not query.strip():
+        raise ToolError("usage", t("query（検索語）を文字列で指定してください",
+                                   "Give query (the search words) as a string"), EXIT_USAGE)
+    argv = []
+    for key, (low, high) in INT_ARGS.items():
+        if key not in arguments:
+            continue
+        value = arguments[key]
+        if isinstance(value, bool) or not isinstance(value, int) or not low <= value <= high:
+            raise ToolError("usage", t("%s は %d〜%d の整数", "%s must be an integer from %d to %d")
+                            % (key, low, high), EXIT_USAGE)
+        argv += ["--" + key.replace("_", "-"), str(value)]
+    return argv + ["--", query]
+
+
+def error_from_stderr(stderr, code):
+    """nas-search の stderr の最後の JSON の行を使う。無ければ作る。"""
+    for line in reversed(stderr.splitlines()):
+        try:
+            payload = json.loads(line)
+        except ValueError:
+            continue
+        if isinstance(payload, dict) and isinstance(payload.get("error"), dict):
+            return payload
+    return ToolError("internal", t("nas-search が終了コード %d で終わりました（理由は不明）",
+                                   "nas-search ended with exit code %d (reason unknown)") % code,
+                     code if 1 <= code <= 130 else EXIT_INTERNAL).payload()
+
+
+def tool_result(payload, is_error, protocol):
+    result = {"content": [{"type": "text", "text": json.dumps(payload, ensure_ascii=False)}],
+              "isError": is_error}
+    if protocol >= STRUCTURED_SINCE:
+        result["structuredContent"] = payload
+    return result
+
+
+class Server:
+    def __init__(self, nas_search, out, python=sys.executable, environ=None):
+        self.nas_search = nas_search
+        self.out = out
+        self.python = python
+        self.environ = os.environ if environ is None else environ
+        self.protocol = PROTOCOL_VERSIONS[0]
+        self.inbox = queue.Queue()
+        self.deferred = []
+        self.progress_interval = PROGRESS_INTERVAL
+        self.call_timeout = CALL_TIMEOUT
+
+    # ---------------------------------------------------------------- 送受信
+
+    def send(self, message):
+        self.out.write(json.dumps(message, ensure_ascii=False) + "\n")
+        self.out.flush()
+
+    def reply(self, msg_id, result):
+        self.send({"jsonrpc": "2.0", "id": msg_id, "result": result})
+
+    def fail(self, msg_id, code, message):
+        self.send({"jsonrpc": "2.0", "id": msg_id, "error": {"code": code, "message": message}})
+
+    def serve(self, stdin):
+        def read():
+            for line in stdin:
+                self.inbox.put(line)
+            self.inbox.put(None)
+        threading.Thread(target=read, daemon=True).start()
+        while True:
+            line = self.deferred.pop(0) if self.deferred else self.inbox.get()
+            if line is None:
+                return
+            self.handle_line(line)
+
+    def handle_line(self, line):
+        if not line.strip():
+            return
+        try:
+            message = json.loads(line)
+        except ValueError:
+            self.fail(None, -32700, "Parse error")
+            return
+        if not isinstance(message, dict) or message.get("jsonrpc") != "2.0":
+            self.fail(None, -32600, "Invalid Request")
+            return
+        method = message.get("method")
+        if not isinstance(method, str):
+            return  # アプリからの応答。こちらからは何も頼まないので捨てる
+        msg_id = message.get("id")
+        params = message.get("params") if isinstance(message.get("params"), dict) else {}
+        if "id" not in message or msg_id is None:
+            return  # 通知（initialized、取り消しなど）。返事はしない
+        try:
+            self.handle_request(msg_id, method, params)
+        except Exception as exc:  # 内容は出さない
+            self.fail(msg_id, -32603, "Internal error (%s)" % type(exc).__name__)
+
+    def handle_request(self, msg_id, method, params):
+        if method == "initialize":
+            wanted = params.get("protocolVersion")
+            self.protocol = wanted if wanted in PROTOCOL_VERSIONS else PROTOCOL_VERSIONS[0]
+            self.reply(msg_id, {
+                "protocolVersion": self.protocol,
+                "capabilities": {"tools": {"listChanged": False}},
+                "serverInfo": {"name": "nas-search", "title": "NAS search", "version": VERSION},
+                "instructions": INSTRUCTIONS})
+        elif method == "ping":
+            self.reply(msg_id, {})
+        elif method == "tools/list":
+            self.reply(msg_id, {"tools": TOOLS})
+        elif method == "tools/call":
+            name = params.get("name")
+            if name not in ("search", "status"):
+                self.fail(msg_id, -32602, "Unknown tool: %s" % str(name)[:100])
+                return
+            meta = params.get("_meta") if isinstance(params.get("_meta"), dict) else {}
+            arguments = params.get("arguments")
+            result = self.call_tool(msg_id, name, {} if arguments is None else arguments,
+                                    meta.get("progressToken"))
+            if result is not None:
+                self.reply(msg_id, result)
+        else:
+            self.fail(msg_id, -32601, "Method not found: %s" % method[:100])
+
+    # ---------------------------------------------------------------- 道具
+
+    def call_tool(self, msg_id, name, arguments, progress_token):
+        """結果を返す。取り消されたら None（返事をしない）。"""
+        try:
+            argv = nas_search_argv(name, arguments)
+        except ToolError as exc:
+            return tool_result(exc.payload(), True, self.protocol)
+        if not os.path.isfile(self.nas_search):
+            return tool_result(ToolError("config", t("nas-search が見つかりません: %s",
+                                                     "nas-search was not found: %s")
+                                         % self.nas_search, EXIT_USAGE).payload(),
+                               True, self.protocol)
+        try:
+            proc = subprocess.Popen([self.python, self.nas_search] + argv,
+                                    stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                                    stderr=subprocess.PIPE, env=dict(self.environ))
+        except OSError as exc:
+            return tool_result(ToolError("internal", t("nas-search を起動できません（%s）",
+                                                       "Cannot start nas-search (%s)")
+                                         % type(exc).__name__, EXIT_INTERNAL).payload(),
+                               True, self.protocol)
+        output = {}
+        worker = threading.Thread(target=lambda: output.update(
+            zip(("stdout", "stderr"), proc.communicate())), daemon=True)
+        worker.start()
+        started = time.monotonic()
+        last_progress = started
+        progress = 0
+        cancelled = False
+        while worker.is_alive():
+            worker.join(POLL)
+            now = time.monotonic()
+            if worker.is_alive() and now - started > self.call_timeout:
+                proc.kill()
+                worker.join()
+                return tool_result(ToolError("ssh", t("nas-search の応答が %d 秒ありません",
+                                                      "No answer from nas-search for %d seconds")
+                                             % self.call_timeout, EXIT_NETWORK).payload(),
+                                   True, self.protocol)
+            if progress_token is not None and now - last_progress >= self.progress_interval:
+                last_progress = now
+                progress += 1
+                self.send({"jsonrpc": "2.0", "method": "notifications/progress", "params": {
+                    "progressToken": progress_token, "progress": progress,
+                    "message": t("検索中（%d 秒）", "Searching (%d s)") % int(now - started)}})
+            cancelled = self.check_inbox(msg_id, proc) or cancelled
+        if cancelled:
+            return None
+        stdout = output.get("stdout", b"").decode("utf-8", "replace")
+        stderr = output.get("stderr", b"").decode("utf-8", "replace")
+        if proc.returncode != 0:
+            return tool_result(error_from_stderr(stderr, proc.returncode), True, self.protocol)
+        try:
+            payload = json.loads(stdout)
+        except ValueError:
+            payload = None
+        if not isinstance(payload, dict):
+            return tool_result(ToolError("response", t("nas-search の出力が JSON ではありません",
+                                                       "The nas-search output is not JSON"),
+                                         EXIT_RESPONSE).payload(), True, self.protocol)
+        return tool_result(payload, False, self.protocol)
+
+    def check_inbox(self, msg_id, proc):
+        """検索の間に届いたものを見る。ping には答え、この検索の取り消しと終了では止める。
+        それ以外は検索のあとで順に処理する。取り消されたら True。"""
+        stopped = False
+        while True:
+            try:
+                line = self.inbox.get_nowait()
+            except queue.Empty:
+                return stopped
+            if line is None:  # アプリが閉じた
+                proc.kill()
+                self.deferred.append(None)
+                return True
+            try:
+                message = json.loads(line)
+            except ValueError:
+                message = None
+            if isinstance(message, dict) and message.get("method") == "ping" and "id" in message:
+                self.reply(message["id"], {})
+                continue
+            if (isinstance(message, dict) and message.get("method") == "notifications/cancelled"
+                    and isinstance(message.get("params"), dict)
+                    and message["params"].get("requestId") == msg_id):
+                proc.kill()
+                stopped = True
+                continue
+            self.deferred.append(line)
+
+
+def default_nas_search(environ):
+    return (environ.get("UNISEARCH_NAS_SEARCH")
+            or os.path.join(os.path.dirname(os.path.realpath(__file__)), "nas-search"))
+
+
+def main(argv=None, environ=None, stdin=None, stdout=None):
+    global LANG
+    environ = os.environ if environ is None else environ
+    argv = sys.argv[1:] if argv is None else argv
+    if argv == ["--version"]:
+        print("nas-search-mcp " + VERSION)
+        return 0
+    if argv:
+        print("usage: nas-search-mcp [--version]  (started by an MCP app over stdio)",
+              file=sys.stderr)
+        return EXIT_USAGE
+    LANG = peek_language(environ)
+    if stdin is None:
+        stdin = open(sys.stdin.fileno(), encoding="utf-8", errors="replace", closefd=False)
+    if stdout is None:
+        stdout = open(sys.stdout.fileno(), "w", encoding="utf-8", closefd=False)
+    Server(default_nas_search(environ), stdout, environ=environ).serve(stdin)
+    return 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except KeyboardInterrupt:
+        sys.exit(130)

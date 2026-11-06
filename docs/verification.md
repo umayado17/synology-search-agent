@@ -159,7 +159,24 @@ keepalive（10分ごと）で、8 時間を超えてもセッションがもつ�
 | 7-3: `UNISEARCH_LANG=en nas-search` | `"message": "Give search words"`、exit 2。外すと日本語 |
 | 7-4: パスワードと OTP の入力欄の英語 | 未実施（任意の手順。本人の入力が要る） |
 
+## MCP サーバーの確認（2026-11-06、v0.9.0 の開発中）
+
+この Mac で、開発中の `clients/nas-search-mcp` と `clients/nas-search`（0.5.0）を使いました。NAS 側は v0.7.0 のまま（入口・検索セッションとも）で、90 日の検索セッションを使いました。検索語と件数以外の結果（ファイル名・パス）は記録していません。
+
+| 確認 | 結果 |
+|---|---|
+| 手で JSON-RPC を送る: `initialize`（2025-06-18） | 同じ版が返った |
+| 同じく `status` | `isError: false`。`consecutive_failures` 0 |
+| 同じく `search`（`test`、`limit` 3、`progressToken` 付き） | `isError: false`、3件、`next_offset` 3、約 1.8 秒。短いので進み具合の通知は出なかった |
+| 同じく `limit` 0 | `isError: true`、`type: usage`。NAS には問い合わせない |
+| Claude Code 2.1.317 に `--mcp-config` で一度だけ読ませて `status` を呼ぶ | 成功。`consecutive_failures` 0 と答えた |
+| 同じく `search`（`test`、`limit` 5） | 成功。5件、`next_offset` 5 と答えた |
+
+Claude Code の設定（`claude mcp add`）には登録していません。
+
 ## まだ確かめていないこと
+
+- MCP: Claude Desktop など、Claude Code 以外のアプリでの動き。長い検索（数十秒〜最長約 250 秒）で、アプリが先に待つのをやめないか、進み具合の通知が使われるか。アプリからの取り消し（単体テストでは確認済み）
 
 - 90 日のセッションが終わりまでもつか（約 25 時間までは確認済み。毎日確かめている）
 - 索引が更新されている最中のページ送りで、追加したファイルが前のほうに入った場合の重複（6-4 では、削除による取りこぼしだけを確かめた）

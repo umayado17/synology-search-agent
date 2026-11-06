@@ -48,6 +48,7 @@ AIエージェント ──ssh（検索専用の鍵）──▶ NAS: unisearch -
 |---|---|
 | [`unisearch`](unisearch) | NAS 上で動く本体。対話検索、検索セッション、SSH 入口 |
 | [`clients/nas-search`](clients/nas-search) | エージェント側のコマンド。ssh を組み立てて結果を返す |
+| [`clients/nas-search-mcp`](clients/nas-search-mcp) | 同じ検索を MCP の道具（`search`・`status`）として出す。中で `nas-search` を呼ぶ |
 | [`skills/nas-search/SKILL.md`](skills/nas-search/SKILL.md) | エージェント向けの説明書（Claude Code のスキル形式、英語。答えはユーザーの言語で返すよう書いてある） |
 | [`scripts/remote-run.sh`](scripts/remote-run.sh) | NAS にファイルを置かずに試すためのスクリプト |
 
@@ -92,6 +93,12 @@ ssh -t <ssh-user>@<nas-host> '~/.local/bin/unisearch "test" --limit 20 --json'
 ```bash
 nas-search "test" --limit 20
 nas-search --status
+```
+
+シェルを使えないアプリでは、MCP の道具として使えます（`clients/nas-search-mcp`）。Claude Code なら、次の1行で登録します。
+
+```bash
+claude mcp add nas-search -- python3 ~/.local/bin/nas-search-mcp
 ```
 
 導入手順は [docs/agent-setup.md](docs/agent-setup.md) にあります。
