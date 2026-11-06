@@ -52,7 +52,11 @@ AIエージェント ──ssh（検索専用の鍵）──▶ NAS: unisearch -
 1. **エージェントから NAS に SSH で届くようにする。** 作者は [Tailscale](https://tailscale.com/) を使い、NAS をインターネットに公開していません（[背景編の0章](docs/background.md#0-前提エージェントから-nas-に届く道)）
 2. **API が使えるか確かめる。** CLI を NAS に置いたあと（[導入手順](docs/agent-setup.md)の1）、NAS の上で `~/.local/bin/unisearch --check-api` を実行します。ログインは要りません。必要な API があって、対応するバージョンなら `"ok": true` が返ります。索引の中身や、検索が実際にできるかまでは確かめません
 3. **Universal Search を確かめる（`--check-api` が失敗したとき）。** DSM 7 では、Universal Search は通常、最初から入っています。DSM 7 の標準の機能で、パッケージセンターからは削除できないパッケージとして扱われています。ただし、すべての機種で必ず入っていると、公式に書かれてはいません。DSM の「パッケージセンター」→「インストール済み」に「Universal Search」があるか、止まっていないかを見てください。無ければパッケージセンターからインストールします
-4. **索引を作る共有フォルダを指定する。** Universal Search の設定（右上の歯車）→「File Indexing」→「Indexed Folder List」で、検索させたいフォルダを追加します。**指定しないと索引は作られず、検索しても何も返りません。** Synology の公式ヘルプでも、索引を作っていないフォルダのファイルは結果に出ず、File Station や SMB で使うフォルダは自分で追加する必要があるとされています（[File Indexing](https://kb.synology.com/en-global/DSM/help/SynoFinder/universalsearch_index?version=7)）。本文まで検索するには、方法に「File content indexing」を選びます
+4. **索引を作る共有フォルダを指定する。** Universal Search の設定（右上の歯車）→「ファイルインデックス処理」（英語の画面では File Indexing）→「インデックス付きフォルダ リスト」（Indexed Folder List）で、検索させたいフォルダを追加します。**指定しないと索引は作られず、検索しても何も返りません。** Synology の公式ヘルプでも、索引を作っていないフォルダのファイルは結果に出ず、File Station や SMB で使うフォルダは自分で追加する必要があるとされています（[File Indexing](https://kb.synology.com/en-global/DSM/help/SynoFinder/universalsearch_index?version=7)）。本文まで検索するには、方法に「File content indexing」を選びます
+
+   ![Universal Search の環境設定。「ファイルインデックス処理」のタブに、インデックス付きフォルダの一覧と状態（終了）が出ている](docs/images/universal-search-indexing-ja.png)
+
+   「インデックス付きフォルダ」に、索引を作る共有フォルダが並びます（画像では伏せています）。「ステータス」が「終了」なら、索引はできあがっています。
 5. **検索専用の DSM アカウントを作る。** 管理者にしない、2段階認証をかける、検索させたい共有フォルダだけを読めるようにします。`homes` を読めるようにすると、全員のホームフォルダが結果に出るので注意してください
 
 6. **実際に検索してみる。** [使い方](#使い方)の1の対話検索で、索引を作ったフォルダのファイルが見つかるか確かめます
