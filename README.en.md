@@ -164,6 +164,11 @@ The steps for checking on a real NAS are in [docs/nas-verification.md](docs/nas-
 
 - [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)
 
+## Changes and security
+
+- Changelog: [CHANGELOG.md](CHANGELOG.md)
+- Reporting security problems: [SECURITY.md](SECURITY.md)
+
 ## License
 
 [MIT](LICENSE)

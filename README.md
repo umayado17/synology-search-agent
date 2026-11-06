@@ -131,6 +131,11 @@ python3 -m unittest discover -s tests -v
 
 - [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)
 
+## 変更履歴とセキュリティ
+
+- 変更履歴: [CHANGELOG.md](CHANGELOG.md)（英語）
+- セキュリティの問題の知らせ方: [SECURITY.md](SECURITY.md)
+
 ## ライセンス
 
 [MIT](LICENSE)
