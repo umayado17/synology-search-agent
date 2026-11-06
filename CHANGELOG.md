@@ -2,6 +2,10 @@
 
 `unisearch` (runs on the NAS) and `nas-search` (runs on the agent's machine) have their own version numbers. The JSON output has `schema_version: 1` in both.
 
+## Planned
+
+- English messages for the commands, chosen by a setting in `server.conf` and `client.conf` (for example `lang = en`). Messages are Japanese only in 0.7.0. Error `type` values and exit codes will not change.
+
 ## unisearch 0.7.0 / nas-search 0.4.0 (2026-11-06)
 
 First public release (beta).

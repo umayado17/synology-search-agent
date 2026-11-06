@@ -15,7 +15,7 @@ A small CLI that searches the **existing Universal Search index** (full text) of
 > This tool uses a Web API that Synology does not publish (`SYNO.Finder.FileIndexing.Search`). A DSM update may break it without notice. This is an unofficial tool and is not affiliated with Synology. Synology, DSM and Universal Search are trademarks of Synology Inc.
 
 > [!NOTE]
-> The detailed documents under `docs/` are in Japanese. Messages printed by the commands are also in Japanese. Agents should rely on the JSON fields (`error.type`) and exit codes, which are stable and documented below.
+> The detailed documents under `docs/` are in Japanese. Messages printed by the commands are also in Japanese for now; English messages, chosen by a setting, are planned for the next version (0.8.0). Agents should rely on the JSON fields (`error.type`) and exit codes, which are stable and documented below.
 
 ## Why
 
