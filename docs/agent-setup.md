@@ -93,6 +93,8 @@ chmod 600 ~/.config/unisearch/client.conf
 
 `timeout` の既定は 260 秒です。NAS 側の入口が待つ最長（250 秒）より長いので、NAS の設定を変えても既定のままで足ります。短くする場合は、`session start` が表示する「1回の検索は最長 N 秒」より長くしてください。
 
+`nas-search` は ssh の接続を使い回します（v0.9.0〜、`ControlMaster`）。最後の呼び出しから 60 秒のあいだ接続を残し、続けて呼ぶと接続の手間（この環境で約 0.3 秒）を省きます。接続の出入り口（ソケット）は `~/.ssh/unisearch-<鍵ごとの印>-<接続ごとの印>` に作られます（`~/.ssh` の中なので、ほかのユーザーからは使えません）。使い回しをやめるには `client.conf` に `reuse_connection=no` と書きます。
+
 確認:
 
 ```bash

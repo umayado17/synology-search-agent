@@ -10,6 +10,7 @@ NAS 側は authorized_keys の `restrict,command="... unisearch --agent-gateway"
 出力・終了コードは NAS 側の入口と同じ（docs/cli-spec.md）。標準ライブラリのみ。
 """
 import argparse
+import hashlib
 import json
 import os
 import shlex
@@ -40,7 +41,9 @@ SSH_OPTIONS = [
 ]
 DEFAULT_TIMEOUT = 260         # NAS 側の入口が待つ最長 250 秒より長く（NAS の設定によらず先に切らない）
 DEFAULT_CONNECT_TIMEOUT = 15
-CONFIG_KEYS = ("host", "key", "timeout", "connect_timeout", "lang")
+CONFIG_KEYS = ("host", "key", "timeout", "connect_timeout", "lang", "reuse_connection")
+CONTROL_PERSIST = 60          # 接続を使い回すとき、最後の呼び出しから開けておく秒数
+MAX_SOCKET_PATH = 100         # UNIX ソケットのパスの上限（macOS は 104 バイト）より短く
 SECRET_WORDS = ("pass", "otp", "sid", "secret", "token", "cookie", "credential")
 
 
@@ -71,7 +74,7 @@ def emit_error(error, stderr):
 # ---------------------------------------------------------------- 設定
 
 def read_config_file(path):
-    """KEY=VALUE 形式（host, key, timeout, connect_timeout, lang）。# で始まる行は無視。無ければ空。"""
+    """KEY=VALUE 形式（host, key, timeout, connect_timeout, lang, reuse_connection）。# で始まる行は無視。無ければ空。"""
     values = {}
     try:
         with open(path, encoding="utf-8") as handle:
@@ -160,7 +163,30 @@ def resolve_config(args, environ):
         seconds_setting(file_values.get("timeout"), "timeout", 5, 600) or DEFAULT_TIMEOUT)
     connect_timeout = seconds_setting(file_values.get("connect_timeout"), "connect_timeout",
                                       1, 120) or DEFAULT_CONNECT_TIMEOUT
-    return host, key, timeout, connect_timeout
+    reuse = (file_values.get("reuse_connection") or "yes").strip().lower()
+    if reuse not in ("yes", "no"):
+        raise ClientError("config", t("reuse_connection は yes か no", "reuse_connection must be yes or no"),
+                          EXIT_USAGE)
+    options = connection_options(connect_timeout, key, reuse == "yes")
+    return host, key, timeout, options
+
+
+def connection_options(connect_timeout, key, reuse, ssh_dir=None):
+    """ssh に足す -o の一覧。reuse なら、接続を CONTROL_PERSIST 秒だけ開けたままにして使い回す。
+
+    ソケットは ~/.ssh/unisearch-<鍵の印>-%C（ssh が 0600 で作る）。鍵を変えたら別の接続になる。
+    ~/.ssh が無いときや、パスが長すぎるときは使い回さない。
+    """
+    options = ["-o", "ConnectTimeout=%d" % connect_timeout]
+    if not reuse:
+        return options
+    ssh_dir = ssh_dir or os.path.join(os.path.expanduser("~"), ".ssh")
+    mark = hashlib.sha256(os.path.abspath(key).encode("utf-8")).hexdigest()[:8]
+    path = os.path.join(ssh_dir, "unisearch-%s-%%C" % mark)
+    if not os.path.isdir(ssh_dir) or len(path.encode("utf-8")) - 2 + 40 > MAX_SOCKET_PATH:
+        return options
+    return options + ["-o", "ControlMaster=auto", "-o", "ControlPath=" + path,
+                      "-o", "ControlPersist=%d" % CONTROL_PERSIST]
 
 
 # ---------------------------------------------------------------- 遠隔呼び出し
@@ -170,16 +196,16 @@ def search_command(query, limit, offset):
     return "search --limit %d --offset %d -- %s" % (limit, offset, shlex.quote(query))
 
 
-def ssh_argv(ssh_bin, host, key, remote_command, connect_timeout=DEFAULT_CONNECT_TIMEOUT):
-    return ([ssh_bin, "-i", key] + SSH_OPTIONS
-            + ["-o", "ConnectTimeout=%d" % connect_timeout, host, remote_command])
+def ssh_argv(ssh_bin, host, key, remote_command, options=None):
+    if options is None:
+        options = connection_options(DEFAULT_CONNECT_TIMEOUT, key, False)
+    return [ssh_bin, "-i", key] + SSH_OPTIONS + list(options) + [host, remote_command]
 
 
-def call_remote(runner, ssh_bin, host, key, remote_command, timeout,
-                connect_timeout=DEFAULT_CONNECT_TIMEOUT):
+def call_remote(runner, ssh_bin, host, key, remote_command, timeout, options=None):
     """(終了コード, stdout, stderr) を返す。ssh 自体の失敗は ClientError。"""
     try:
-        completed = runner(ssh_argv(ssh_bin, host, key, remote_command, connect_timeout),
+        completed = runner(ssh_argv(ssh_bin, host, key, remote_command, options),
                            stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                            stdin=subprocess.DEVNULL, timeout=timeout)
     except FileNotFoundError:
@@ -212,8 +238,7 @@ def parse_result(stdout):
     return result
 
 
-def collect(runner, ssh_bin, host, key, query, offset, max_results, timeout,
-            connect_timeout=DEFAULT_CONNECT_TIMEOUT):
+def collect(runner, ssh_bin, host, key, query, offset, max_results, timeout, options=None):
     """ページを順に取り、最大 max_results 件まで集める（範囲外は NAS 側で除外済み）。
 
     1回に頼む件数を「あと何件必要か」に合わせるので、取った結果を捨てることはない。
@@ -227,7 +252,7 @@ def collect(runner, ssh_bin, host, key, query, offset, max_results, timeout,
         size = min(PAGE_SIZE, max_results - len(hits))
         code, stdout, stderr = call_remote(
             runner, ssh_bin, host, key, search_command(query, size, next_offset), timeout,
-            connect_timeout)
+            options)
         if code != EXIT_OK:
             return code, None, stderr
         page = parse_result(stdout)
@@ -327,18 +352,17 @@ def main(argv=None, environ=None, runner=None, stdout=None, stderr=None):
         LANG = peek_language(environ)
         args = build_parser().parse_args(argv)
         validate(args)
-        host, key, timeout, connect_timeout = resolve_config(args, environ)
+        host, key, timeout, options = resolve_config(args, environ)
         if args.max_results is not None:
             code, result, err = collect(runner, ssh_bin, host, key, args.query, args.offset,
-                                        args.max_results, timeout, connect_timeout)
+                                        args.max_results, timeout, options)
             if code != EXIT_OK:
                 stderr.write(err)
                 return code
             print(json.dumps(result, ensure_ascii=False), file=stdout)
             return EXIT_OK
         remote = "status" if args.status else search_command(args.query, args.limit, args.offset)
-        code, out, err = call_remote(runner, ssh_bin, host, key, remote, timeout,
-                                     connect_timeout)
+        code, out, err = call_remote(runner, ssh_bin, host, key, remote, timeout, options)
         stdout.write(out)
         stderr.write(err)
         return code

@@ -190,7 +190,7 @@ status                                        → stdout に {"schema_version":1
 - `--max-results N`（1〜1000）: ページを送り、最大 N 件を1つの JSON にまとめる（`pages_fetched` を追加、最大20ページ）。1回に頼む件数は `min(100, 残り件数)` なので、取った結果を捨てない。最後の `next_offset` から続きを取れる
 - `--status` は検索語・`--max-results`・`--offset` と併用できない（exit 2）
 - 設定: `--host`/`--key` > 環境変数 `UNISEARCH_HOST`/`UNISEARCH_KEY` > `~/.config/unisearch/client.conf`（`UNISEARCH_CLIENT_CONFIG` で変更可）。未設定は exit 2（`type: config`）
-- `client.conf` に書ける名前: `host`、`key`、`timeout`（1回の呼び出しの上限秒、5〜600、既定 260。`--timeout` が優先）、`connect_timeout`（ssh の接続待ち秒、1〜120、既定 15）、`lang`（ja / en、既定 ja。`UNISEARCH_LANG` が優先）。知らない名前・パスワードなどは exit 2
+- `client.conf` に書ける名前: `host`、`key`、`timeout`（1回の呼び出しの上限秒、5〜600、既定 260。`--timeout` が優先）、`connect_timeout`（ssh の接続待ち秒、1〜120、既定 15）、`lang`（ja / en、既定 ja。`UNISEARCH_LANG` が優先）、`reuse_connection`（yes / no、既定 yes。ssh の接続を 60 秒使い回す）。知らない名前・パスワードなどは exit 2
 - ssh 自体の失敗（ssh の終了コード 255）は exit 5（`type: ssh`）。パスワード認証は試さない
 - 送る文字列は `search --limit N --offset N -- <shlex.quote(検索語)>`
 
