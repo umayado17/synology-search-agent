@@ -1,77 +1,79 @@
 ---
 name: nas-search
-description: Search files on the user's Synology NAS through its Universal Search index (file names and full text) and get JSON results with paths, sizes and dates. Use when the user asks to find, locate or list files or documents stored on their NAS, file server, archive or backups (e.g. "NASにある〇〇の資料を探して"). Read-only; it cannot open, change or delete files.
+description: Search files on the user's Synology NAS through its Universal Search index (file names and full text) and get JSON results with paths, sizes and dates. Use when the user asks to find, locate or list files or documents stored on their NAS, file server, archive or backups (e.g. "NASにある〇〇の資料を探して", "find the 2019 budget file on the NAS"). Read-only; it cannot open, change or delete files.
 ---
 
-# nas-search: NAS のアーカイブを検索する
+# nas-search: search the NAS archive
 
-`nas-search` は、Synology NAS の Universal Search（全文検索インデックス）を SSH 経由で検索し、結果を JSON で返すコマンドです。対象は、本人が許可した共有フォルダ（例 `/archive`）の中だけです。
+`nas-search` searches the Universal Search (full-text) index of a Synology NAS over SSH and returns JSON. It only searches the shared folders the user allowed (for example `/archive`).
 
-## できること / できないこと
+Answer the user in their own language. The command's messages are in Japanese; rely on `error.type` and the exit code, not on the message text.
 
-- できる: ファイル名と本文（インデックス済みのもの）での検索。結果はファイル名・パス・サイズ・更新日時・フォルダかどうか
-- できない: ファイルの中身を読む、ダウンロード、変更、削除。許可範囲外の検索。NAS 上での任意のコマンド実行
-- 本文の抜粋は返りません。中身が必要なら、見つかったパスをユーザーに伝えて判断を仰いでください
+## What it can and cannot do
 
-## 使い方
+- Can: search by file name and by indexed document text. Results give name, path, size, modified time, and whether it is a folder.
+- Cannot: read file contents, download, change or delete files, search outside the allowed folders, or run other commands on the NAS.
+- No text excerpts are returned. If the contents are needed, tell the user the paths you found and let them decide.
+
+## Usage
 
 ```bash
-nas-search "検索語"                         # 既定20件
-nas-search "在留資格 申請" --limit 50         # 空白を含む語は引用符で1つにする
-nas-search "検索語" --offset 20              # 次のページ（前回の next_offset を使う）
-nas-search "検索語" --max-results 200        # ページを自動で送って最大200件集める
-nas-search --limit 10 -- "-で始まる語"        # オプションは -- より前に置く
-nas-search --status                          # 検索セッションの状態（残り時間など）
+nas-search "query"                           # 20 results by default
+nas-search "visa application" --limit 50     # quote a query with spaces as one argument
+nas-search "query" --offset 20               # next page (use the previous next_offset)
+nas-search "query" --max-results 200         # page automatically, up to 200 results
+nas-search --limit 10 -- "-starts-with-dash" # put options before --
+nas-search --status                          # search session state (time left, etc.)
 ```
 
-- 検索語はシェルを通らずにそのまま NAS に届きます（`;` や `$()` も単なる文字）
-- 1回の検索は数秒〜十数秒かかることがあります。むやみに連続で呼ばず、`--max-results` でまとめて取ってください
-- 語はファイル名の前方一致に強く重み付けされ、本文一致も含みます。見つからないときは語を短くする・別表記（全角/半角、英語/日本語）を試す
+- The query reaches the NAS as is, without a shell (`;` and `$()` are plain characters).
+- One search can take from a few seconds to over ten seconds. Do not call it many times in a row; use `--max-results` to collect more at once.
+- File-name prefix matches weigh most, and document text matches are included. If nothing is found, shorten the query or try other spellings (full-width/half-width, English/Japanese).
 
-## 結果（stdout、JSON 1行）
+## Result (stdout, one JSON line)
 
 ```json
 {"schema_version": 1, "query": "test", "offset": 0, "limit": 20, "total": null,
- "returned": 20, "next_offset": 20, "has_error": false, "unavailable": [],
+ "returned": 20, "next_offset": 20, "has_error": false, "unavailable": null,
  "hits": [{"name": "test.pdf", "share_path": "/archive/Drive/test.pdf",
            "path": "/volume1/archive/Drive/test.pdf", "extension": "pdf",
            "size": 12345, "is_dir": false, "modified": 1396685721,
            "modified_utc": "2014-04-05T08:15:21Z", "readable": true}]}
 ```
 
-- `share_path` をユーザーへの説明に使う（`path` は NAS 内部の絶対パス）
-- `total` は常に `null`（範囲外の件数を漏らさないため）。続きがあるかは `next_offset` が `null` でないかで判断
-- `offset`・`next_offset` は許可範囲内での件数。`next_offset` をそのまま次の `--offset` に使えば、索引が変わらない間は抜けも重複もない
-- ページの間に NAS の索引が更新されると、同じファイルが2回出たり、何件か飛んだりすることがある（ページの間に消えたファイルの数だけ飛ぶ）。複数ページを合わせるときは `share_path` で重複を除く
-- `--max-results` の結果も、最後の `next_offset` から続きを取れる
-- `modified` は UNIX 秒、`modified_utc` は UTC。日本時間で伝えるときは +9 時間
+- Use `share_path` when you tell the user where a file is (`path` is the NAS's internal absolute path).
+- `total` is always `null` (so the number of out-of-scope hits is not revealed). Whether more results exist is shown by `next_offset` not being `null`.
+- `offset` and `next_offset` count only results inside the allowed folders. Passing `next_offset` as the next `--offset` gives no gaps or repeats while the index does not change.
+- If the NAS index changes between pages, a file can appear twice, or some results can be skipped (as many as the files that disappeared between pages). When combining pages, deduplicate by `share_path`.
+- A `--max-results` result can also be continued from its last `next_offset`.
+- `modified` is UNIX seconds; `modified_utc` is UTC. Convert to the user's time zone when you report dates (Japan is UTC+9).
 
-## 終了コードと対応
+## Exit codes and what to do
 
-| コード | 意味 | エージェントの対応 |
+| Code | Meaning | What the agent does |
 |---|---|---|
-| 0 | 成功 | 結果を使う（0件もあり得る） |
-| 2 | 使い方の誤り | stderr の `message` を読んで引数を直す。同じ呼び出しを繰り返さない |
-| 4 | NAS の検索 API がエラー、または `scan_limit`（範囲外が多く読み進められない） | 1回だけ再試行（`scan_limit` は続きから読む）。続くならユーザーに報告 |
-| 5 | SSH 接続・応答なし | NAS やネットワークが止まっている可能性。ユーザーに報告 |
-| 6 | 応答形式が想定外 | ユーザーに報告（NAS の更新などで API が変わった可能性） |
-| 8 | 検索セッションが無い・期限切れ | **ユーザーに「NAS の検索セッションを開始してください」と頼む**。自分でログインしようとしない |
+| 0 | Success | Use the result (0 hits is possible) |
+| 2 | Usage or settings error | Read `message` on stderr and fix the arguments. Do not repeat the same call |
+| 4 | NAS search API error, or `scan_limit` (too many out-of-scope results to read through) | Retry once (`scan_limit` continues where it stopped). If it keeps failing, tell the user |
+| 5 | SSH connection failed or no response | The NAS or network may be down. Tell the user |
+| 6 | Unexpected response format | Tell the user (a NAS update may have changed the API) |
+| 8 | No search session, or it has ended | **Ask the user to start the NAS search session.** Never try to log in yourself |
 
-エラーは stderr に JSON 1行（`{"error": {"type", "message", "exit_code"}}`）で出ます。
+Errors are one JSON line on stderr: `{"error": {"type", "message", "exit_code"}}`.
 
-## 守ること
+## Rules
 
-- パスワードや認証コードを求めたり、扱ったりしない。セッション開始は必ず本人が行う
-- 許可範囲外を探すために、別の手段（他の SSH 鍵、ファイル共有など）を試さない
-- 検索結果のファイル名・パスには個人情報が含まれ得る。必要な範囲だけ引用し、外部サービスに送らない
+- Never ask for or handle passwords or authentication codes. A person always starts the session.
+- Never try other ways (other SSH keys, file sharing, and so on) to look outside the allowed folders.
+- File names and paths in results can contain personal information. Quote only what is needed, and never send them to outside services.
 
-## 設定（人間が一度だけ）
+## Setup (done once by a person)
 
-接続先と鍵は環境変数か `~/.config/unisearch/client.conf` に置きます（詳細はリポジトリの `docs/agent-setup.md`）。
+Put the host and key in environment variables or in `~/.config/unisearch/client.conf` (details in the repository's `docs/agent-setup.md`):
 
 ```
 host=<ssh-user>@<nas-host>
 key=~/.ssh/unisearch_agent
 ```
 
-未設定だと終了コード 2（`type: config`）になります。待ち時間は `timeout=`（秒、既定 260）で変えられます。
+Without them, the exit code is 2 (`type: config`). The wait time can be changed with `timeout=` (seconds, default 260).

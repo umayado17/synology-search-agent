@@ -1,5 +1,7 @@
 # synology-search-agent-cli
 
+日本語 | [English](README.en.md)
+
 Synology NAS の **Universal Search（全文検索）の既存インデックス**を、SSH から検索して JSON で受け取るための小さな CLI です。AI エージェントから使うことを想定しています。
 
 - **sudo 不要・root 不要**。DSM の一般ユーザーとして動きます
@@ -42,7 +44,7 @@ AIエージェント ──ssh（検索専用の鍵）──▶ NAS: unisearch -
 |---|---|
 | [`unisearch`](unisearch) | NAS 上で動く本体。対話検索、検索セッション、SSH 入口 |
 | [`clients/nas-search`](clients/nas-search) | エージェント側のコマンド。ssh を組み立てて結果を返す |
-| [`skills/nas-search/SKILL.md`](skills/nas-search/SKILL.md) | エージェント向けの説明書（Claude Code のスキル形式） |
+| [`skills/nas-search/SKILL.md`](skills/nas-search/SKILL.md) | エージェント向けの説明書（Claude Code のスキル形式、英語。答えはユーザーの言語で返すよう書いてある） |
 | [`scripts/remote-run.sh`](scripts/remote-run.sh) | NAS にファイルを置かずに試すためのスクリプト |
 
 ## 使う前の準備（NAS 側）
