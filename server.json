@@ -4,7 +4,7 @@
   "title": "Synology NAS search",
   "description": "Search a Synology NAS's Universal Search index over SSH. No sudo, keeps DSM 2FA, read-only.",
   "repository": {
-    "url": "https://github.com/umayado17/synology-search-agent-cli",
+    "url": "https://github.com/umayado17/synology-search-agent",
     "source": "github"
   },
   "version": "0.6.0",

@@ -1,6 +1,6 @@
-# synology-search-agent-cli
+# synology-search-agent
 
-English | [日本語](https://github.com/umayado17/synology-search-agent-cli/blob/main/README.ja.md)
+English | [日本語](https://github.com/umayado17/synology-search-agent/blob/main/README.ja.md)
 
 <!-- mcp-name: io.github.umayado17/nas-search-mcp -->
 
@@ -12,7 +12,7 @@ English | [日本語](https://github.com/umayado17/synology-search-agent-cli/blo
 - **Read-only.** It never changes files, the index or shared folders.
 - Runs on the Python 3.8+ standard library only (no extra packages).
 
-![Demo: asked in English for the files of the "Kamome project", an AI agent searches with nas-search for the Japanese name, and lists five files newest first, three of them matched by their text (fictional data)](https://raw.githubusercontent.com/umayado17/synology-search-agent-cli/main/docs/images/demo-en.gif)
+![Demo: asked in English for the files of the "Kamome project", an AI agent searches with nas-search for the Japanese name, and lists five files newest first, three of them matched by their text (fictional data)](https://raw.githubusercontent.com/umayado17/synology-search-agent/main/docs/images/demo-en.gif)
 
 > [!WARNING]
 > This tool uses a Web API that Synology does not publish (`SYNO.Finder.FileIndexing.Search`). A DSM update may break it without notice. This is an unofficial tool and is not affiliated with Synology. Synology, DSM and Universal Search are trademarks of Synology Inc.
@@ -62,7 +62,7 @@ Desktop apps may not see your shell's `PATH`. If the app cannot start it, write 
 
 Both are read-only. The server only starts `nas-search` and passes its JSON on; it sends long searches' progress when the app asks for it, and stops a search when the app cancels it.
 
-The MCP server is the agent's side only. The NAS needs a one-time setup ([Before you start](#before-you-start-on-the-nas) and [docs/agent-setup.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/docs/agent-setup.md)): place `unisearch` on the NAS, give the agent a search-only SSH key, and have a person start a search session with the DSM password and OTP. Without a session, the tools return exit code 8 (`session_required`).
+The MCP server is the agent's side only. The NAS needs a one-time setup ([Before you start](#before-you-start-on-the-nas) and [docs/agent-setup.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/agent-setup.md)): place `unisearch` on the NAS, give the agent a search-only SSH key, and have a person start a search session with the DSM password and OTP. Without a session, the tools return exit code 8 (`session_required`).
 
 ## Why
 
@@ -72,13 +72,13 @@ This tool does not build a new index. It **lets an AI agent use the Universal Se
 
 The idea that this API can be called came from [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli) (2021). No code from that project is used here (it has no license); only the fact that the API exists and can be called.
 
-The background story (in Japanese) is in [docs/background.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/docs/background.md).
+The background story (in Japanese) is in [docs/background.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/background.md).
 
 ## Tested environment
 
 - Synology DS225+, DSM 7.4.1 (build 90080), Python 3.8.15 on the NAS
 - Status: beta. A search session was checked to keep working for about 25 hours (not yet to the end of 90 days). Other models and DSM versions are not verified yet
-- What was checked on the device: [docs/verification.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/docs/verification.md) (Japanese)
+- What was checked on the device: [docs/verification.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/verification.md) (Japanese)
 
 On other models and DSM versions, run `--check-api` first to see whether the API is there.
 
@@ -96,20 +96,20 @@ AI agent ──ssh (search-only key)──▶ NAS: unisearch --agent-gateway
 
 | File | Role |
 |---|---|
-| [`unisearch`](https://github.com/umayado17/synology-search-agent-cli/blob/main/unisearch) | Runs on the NAS. Interactive search, the search session, and the SSH entry point |
-| [`clients/nas-search`](https://github.com/umayado17/synology-search-agent-cli/blob/main/clients/nas-search) | Runs on the agent's machine. Builds the ssh call and returns the result |
-| [`clients/nas-search-mcp`](https://github.com/umayado17/synology-search-agent-cli/blob/main/clients/nas-search-mcp) | Offers the same search as MCP tools (`search`, `status`); runs `nas-search` inside |
-| [`skills/nas-search/SKILL.md`](https://github.com/umayado17/synology-search-agent-cli/blob/main/skills/nas-search/SKILL.md) | Instructions for agents (Claude Code skill format) |
-| [`scripts/remote-run.sh`](https://github.com/umayado17/synology-search-agent-cli/blob/main/scripts/remote-run.sh) | Try the CLI without placing any file on the NAS |
+| [`unisearch`](https://github.com/umayado17/synology-search-agent/blob/main/unisearch) | Runs on the NAS. Interactive search, the search session, and the SSH entry point |
+| [`clients/nas-search`](https://github.com/umayado17/synology-search-agent/blob/main/clients/nas-search) | Runs on the agent's machine. Builds the ssh call and returns the result |
+| [`clients/nas-search-mcp`](https://github.com/umayado17/synology-search-agent/blob/main/clients/nas-search-mcp) | Offers the same search as MCP tools (`search`, `status`); runs `nas-search` inside |
+| [`skills/nas-search/SKILL.md`](https://github.com/umayado17/synology-search-agent/blob/main/skills/nas-search/SKILL.md) | Instructions for agents (Claude Code skill format) |
+| [`scripts/remote-run.sh`](https://github.com/umayado17/synology-search-agent/blob/main/scripts/remote-run.sh) | Try the CLI without placing any file on the NAS |
 
 ## Before you start (on the NAS)
 
 1. **Make the NAS reachable from the agent over SSH.** The author uses [Tailscale](https://tailscale.com/) and does not expose the NAS to the internet. The tool itself does not need Tailscale; any SSH path works. Do not expose the NAS's SSH port to the internet.
-2. **Check the API.** After placing the CLI on the NAS (step 1 of [docs/agent-setup.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/docs/agent-setup.md)), run `~/.local/bin/unisearch --check-api` on the NAS. No login is needed. It returns `"ok": true` when the needed APIs exist in a supported version. It does not check the contents of the index or whether a search works.
+2. **Check the API.** After placing the CLI on the NAS (step 1 of [docs/agent-setup.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/agent-setup.md)), run `~/.local/bin/unisearch --check-api` on the NAS. No login is needed. It returns `"ok": true` when the needed APIs exist in a supported version. It does not check the contents of the index or whether a search works.
 3. **Check Universal Search (if `--check-api` fails).** On DSM 7, Universal Search is normally preinstalled as a built-in package that cannot be removed from Package Center. Synology does not officially state that it is present on every model, though. Look for "Universal Search" in Package Center → Installed and make sure it is running. If it is missing, install it from Package Center.
 4. **Choose the shared folders to index.** In Universal Search, open settings (gear icon, top right) → File Indexing → Indexed Folder List, and add the folders you want to search. **If you add none, no index is built and searches return nothing.** Synology's help says files in folders that are not indexed do not appear in results, and that folders used through File Station or SMB must be added by hand ([File Indexing](https://kb.synology.com/en-global/DSM/help/SynoFinder/universalsearch_index?version=7)). To search inside documents, choose "File content indexing".
 
-   ![Universal Search settings in a Japanese DSM, with English labels added: the File Indexing tab shows the indexed folders and the status "Finished"](https://raw.githubusercontent.com/umayado17/synology-search-agent-cli/main/docs/images/universal-search-indexing-en.png)
+   ![Universal Search settings in a Japanese DSM, with English labels added: the File Indexing tab shows the indexed folders and the status "Finished"](https://raw.githubusercontent.com/umayado17/synology-search-agent/main/docs/images/universal-search-indexing-en.png)
 
    The screenshot is from a Japanese DSM; the yellow English labels were added. The text in the middle says that the folders in Indexed Folder List are indexed for Universal Search and File Station, and that Check Index Database scans the index when search results look wrong.
 5. **Create a search-only DSM account.** Not an administrator, with two-factor authentication, and with read access only to the shared folders you want searched. Be careful with `homes`: if the account can read it, every user's home folder shows up in results.
@@ -146,7 +146,7 @@ nas-search --status
 
 For MCP apps, see [Use it as an MCP server](#use-it-as-an-mcp-server). Without PyPI, copy `clients/nas-search` and `clients/nas-search-mcp` into the same folder and start the server with `python3 <folder>/nas-search-mcp`.
 
-Setup steps are in [docs/agent-setup.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/docs/agent-setup.md) (Japanese; the commands in it can be used as they are).
+Setup steps are in [docs/agent-setup.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/agent-setup.md) (Japanese; the commands in it can be used as they are).
 
 ### Output
 
@@ -180,7 +180,7 @@ Errors are one JSON line on stderr: `{"error": {"type", "message", "exit_code"}}
 | 9 | A search session is already running (`session_running`), or the state folder is wrong (`state`) |
 | 130 | Interrupted with Ctrl-C (`interrupted`) |
 
-The full specification (options, fields, exit codes, settings) is in [docs/cli-spec.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/docs/cli-spec.md) (Japanese).
+The full specification (options, fields, exit codes, settings) is in [docs/cli-spec.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/cli-spec.md) (Japanese).
 
 ## Security design
 
@@ -190,7 +190,7 @@ The full specification (options, fields, exit codes, settings) is in [docs/cli-s
 - The search scope is limited twice. The main guard is DSM's shared-folder permissions; the CLI's `--allow-prefix` is a second layer. When results are limited, the out-of-scope count is not shown.
 - Use a search-only DSM account (not an administrator, with two-factor authentication).
 
-The design discussion (Japanese) is in [docs/design-noninteractive-auth.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/docs/design-noninteractive-auth.md).
+The design discussion (Japanese) is in [docs/design-noninteractive-auth.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/design-noninteractive-auth.md).
 
 ## Settings files
 
@@ -214,7 +214,7 @@ The tests use only the standard library and do not need a NAS.
 python3 -m unittest discover -s tests -v
 ```
 
-The steps for checking on a real NAS are in [docs/nas-verification.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/docs/nas-verification.md) (Japanese).
+The steps for checking on a real NAS are in [docs/nas-verification.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/nas-verification.md) (Japanese).
 
 ## See also
 
@@ -222,9 +222,9 @@ The steps for checking on a real NAS are in [docs/nas-verification.md](https://g
 
 ## Changes and security
 
-- Changelog: [CHANGELOG.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/CHANGELOG.md)
-- Reporting security problems: [SECURITY.md](https://github.com/umayado17/synology-search-agent-cli/blob/main/SECURITY.md)
+- Changelog: [CHANGELOG.md](https://github.com/umayado17/synology-search-agent/blob/main/CHANGELOG.md)
+- Reporting security problems: [SECURITY.md](https://github.com/umayado17/synology-search-agent/blob/main/SECURITY.md)
 
 ## License
 
-[MIT](https://github.com/umayado17/synology-search-agent-cli/blob/main/LICENSE)
+[MIT](https://github.com/umayado17/synology-search-agent/blob/main/LICENSE)

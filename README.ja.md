@@ -1,4 +1,4 @@
-# synology-search-agent-cli
+# synology-search-agent
 
 [English](README.md) | 日本語
 

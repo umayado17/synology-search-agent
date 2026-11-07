@@ -25,9 +25,9 @@ classifiers = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/umayado17/synology-search-agent-cli"
-Changelog = "https://github.com/umayado17/synology-search-agent-cli/blob/main/CHANGELOG.md"
-Issues = "https://github.com/umayado17/synology-search-agent-cli/issues"
+Homepage = "https://github.com/umayado17/synology-search-agent"
+Changelog = "https://github.com/umayado17/synology-search-agent/blob/main/CHANGELOG.md"
+Issues = "https://github.com/umayado17/synology-search-agent/issues"
 
 [project.scripts]
 nas-search = "nas_search_mcp.nas_search:main"
