@@ -2,7 +2,7 @@
 
 `unisearch` (runs on the NAS) and `nas-search` (runs on the agent's machine) have their own version numbers. The JSON output has `schema_version: 1` in both.
 
-## unisearch 0.8.0 / nas-search 0.5.0 (unreleased)
+## unisearch 0.8.0 / nas-search 0.5.0 (2026-11-07)
 
 First public release (beta).
 

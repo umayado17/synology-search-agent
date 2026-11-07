@@ -30,7 +30,7 @@ The background story (in Japanese) is in [docs/background.md](docs/background.md
 ## Tested environment
 
 - Synology DS225+, DSM 7.4.1 (build 90080), Python 3.8.15 on the NAS
-- Status: beta. Sessions longer than 24 hours and other models or DSM versions are not verified yet
+- Status: beta. A search session was checked to keep working for about 25 hours (not yet to the end of 90 days). Other models and DSM versions are not verified yet
 - What was checked on the device: [docs/verification.md](docs/verification.md) (Japanese)
 
 On other models and DSM versions, run `--check-api` first to see whether the API is there.
@@ -88,7 +88,7 @@ You type the DSM user name, password and OTP in the terminal. Each run logs in a
 
 ### 2. From an AI agent
 
-1. A person starts a search session on the NAS and types the password and OTP. The session lasts 8 hours by default (1 minute to 90 days). When it ends, a person starts it again. Whether DSM keeps the login alive for more than 24 hours is not verified yet.
+1. A person starts a search session on the NAS and types the password and OTP. The session lasts 8 hours by default (1 minute to 90 days). When it ends, a person starts it again. DSM kept the login alive for about 25 hours in our test; longer periods are not verified yet.
 2. The agent calls `nas-search "<query>"` with its search-only SSH key. No password or OTP is needed.
 
 ```bash
