@@ -279,6 +279,57 @@ class LongSearchTest(McpTestBase):
         self.assertEqual((error["type"], error["exit_code"]), ("ssh", 5))
 
 
+class PackageLayoutTest(unittest.TestCase):
+    """pip で入れた形（nas_search_mcp/server.py と nas_search.py）でも nas-search を見つける。"""
+
+    def load_from(self, path):
+        loader = importlib.machinery.SourceFileLoader("packaged_server", path)
+        spec = importlib.util.spec_from_loader("packaged_server", loader)
+        module = importlib.util.module_from_spec(spec)
+        loader.exec_module(module)
+        return module
+
+    def test_repository_layout(self):
+        self.assertEqual(mcp.default_nas_search({}),
+                         os.path.join(os.path.dirname(os.path.realpath(MCP)), "nas-search"))
+
+    def test_installed_layout(self):
+        tmp = tempfile.mkdtemp(prefix="nsmcp-pkg-")
+        try:
+            server = os.path.join(tmp, "server.py")
+            shutil.copy(MCP, server)
+            with open(os.path.join(tmp, "nas_search.py"), "w") as handle:
+                handle.write(FAKE_NAS_SEARCH)
+            module = self.load_from(server)
+            found = module.default_nas_search({})
+            self.assertEqual(os.path.realpath(found),
+                             os.path.realpath(os.path.join(tmp, "nas_search.py")))
+            self.assertEqual(module.default_nas_search({"UNISEARCH_NAS_SEARCH": "/x"}), "/x")
+        finally:
+            shutil.rmtree(tmp, ignore_errors=True)
+
+    def test_pyproject_maps_existing_files(self):
+        with open(os.path.join(ROOT, "pyproject.toml"), encoding="utf-8") as handle:
+            text = handle.read()
+        for source in ("packaging/__init__.py", "clients/nas-search", "clients/nas-search-mcp"):
+            self.assertIn('"%s" = ' % source, text)
+            self.assertTrue(os.path.isfile(os.path.join(ROOT, source)), source)
+
+
+    def test_registry_files_match_the_version(self):
+        with open(os.path.join(ROOT, "server.json"), encoding="utf-8") as handle:
+            server = json.load(handle)
+        package = server["packages"][0]
+        self.assertEqual(server["version"], mcp.VERSION)
+        self.assertEqual(package["version"], mcp.VERSION)
+        self.assertEqual(package["identifier"], "nas-search-mcp")
+        self.assertLessEqual(len(server["description"]), 100)
+        with open(os.path.join(ROOT, "README.md"), encoding="utf-8") as handle:
+            self.assertIn("mcp-name: " + server["name"], handle.read(),
+                          "PyPI の説明（README.md）に Registry の名前が要る")
+        with open(os.path.join(ROOT, "glama.json"), encoding="utf-8") as handle:
+            self.assertIn("umayado17", json.load(handle)["maintainers"])
+
 class StdioEndToEndTest(McpTestBase):
     """本物のプロセスとして起動し、stdin / stdout でやり取りする。"""
 

@@ -1,0 +1,44 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.umayado17/nas-search-mcp",
+  "title": "Synology NAS search",
+  "description": "Search a Synology NAS's Universal Search index over SSH. No sudo, keeps DSM 2FA, read-only.",
+  "repository": {
+    "url": "https://github.com/umayado17/synology-search-agent-cli",
+    "source": "github"
+  },
+  "version": "0.6.0",
+  "packages": [
+    {
+      "registryType": "pypi",
+      "identifier": "nas-search-mcp",
+      "version": "0.6.0",
+      "transport": {
+        "type": "stdio"
+      },
+      "environmentVariables": [
+        {
+          "name": "UNISEARCH_HOST",
+          "description": "SSH destination of the NAS, e.g. user@nas. Can be set in ~/.config/unisearch/client.conf instead.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "UNISEARCH_KEY",
+          "description": "Path to the search-only SSH key. Can be set in ~/.config/unisearch/client.conf instead.",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        },
+        {
+          "name": "UNISEARCH_LANG",
+          "description": "Language of messages: en or ja (default ja).",
+          "isRequired": false,
+          "format": "string",
+          "isSecret": false
+        }
+      ]
+    }
+  ]
+}

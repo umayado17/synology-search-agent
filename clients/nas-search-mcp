@@ -360,8 +360,14 @@ class Server:
 
 
 def default_nas_search(environ):
-    return (environ.get("UNISEARCH_NAS_SEARCH")
-            or os.path.join(os.path.dirname(os.path.realpath(__file__)), "nas-search"))
+    """環境変数、無ければ同じディレクトリの nas-search（pip で入れた場合は nas_search.py）。"""
+    if environ.get("UNISEARCH_NAS_SEARCH"):
+        return environ["UNISEARCH_NAS_SEARCH"]
+    here = os.path.dirname(os.path.realpath(__file__))
+    for name in ("nas-search", "nas_search.py"):
+        if os.path.isfile(os.path.join(here, name)):
+            return os.path.join(here, name)
+    return os.path.join(here, "nas-search")
 
 
 def main(argv=None, environ=None, stdin=None, stdout=None):

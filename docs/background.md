@@ -35,7 +35,7 @@ AI エージェントは SSH で NAS に入れます。ただ、`find` や `grep
 
 ## 2. Universal Search：よい索引があるのに、AI から使う入口がない
 
-Synology の Universal Search（パッケージ名 `SynoFinder`）は、DSM 7 では通常、最初から入っています（くわしくは [README](../README.md#使う前の準備nas-側)）。指定した共有フォルダについて、ファイル名だけでなく文書の本文まで索引にします。DSM の画面から使うと便利で、索引の更新も Synology 側がしてくれます。
+Synology の Universal Search（パッケージ名 `SynoFinder`）は、DSM 7 では通常、最初から入っています（くわしくは [README](../README.ja.md#使う前の準備nas-側)）。指定した共有フォルダについて、ファイル名だけでなく文書の本文まで索引にします。DSM の画面から使うと便利で、索引の更新も Synology 側がしてくれます。
 
 ところが、プログラムから使う公開された入口がありません。
 
