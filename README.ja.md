@@ -23,7 +23,7 @@ Synology NAS の **Universal Search（全文検索）の既存インデックス
 
 この API を呼び出せることは、[atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)（2021年）で知りました。このリポジトリは、あちらのコードを使っていません（あちらにはライセンスが付いていないため）。参考にしたのは、API があって呼び出せるという点だけです。
 
-くわしい経緯は [docs/background.md](docs/background.md) にあります。
+くわしい経緯は [docs/background.md](docs/background.md) にあります。Zenn にも記事を2つ書きました。[仕組みと実機での確認](https://zenn.dev/n_hiraoka/articles/8514c11759816d)と、[3つの AI と5日間で作った記録](https://zenn.dev/n_hiraoka/articles/c762c226585225)です。
 
 ## 動作確認済みの環境
 
@@ -158,6 +158,8 @@ python3 -m unittest discover -s tests -v
 ## 参考
 
 - [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli)：Universal Search の API をシェルから呼ぶ、先に作られた例。このツールのきっかけです
+- [記事：仕組みと実機での確認](https://zenn.dev/n_hiraoka/articles/8514c11759816d)（Zenn）
+- [記事：3つの AI と5日間で作った記録](https://zenn.dev/n_hiraoka/articles/c762c226585225)（Zenn）
 
 ## 変更履歴とセキュリティ
 

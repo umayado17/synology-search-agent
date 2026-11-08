@@ -74,7 +74,7 @@ This tool does not build a new index. It **lets an AI agent use the Universal Se
 
 The idea that this API can be called came from [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli) (2021). No code from that project is used here (it has no license); only the fact that the API exists and can be called.
 
-The background story (in Japanese) is in [docs/background.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/background.md).
+The background story (in Japanese) is in [docs/background.md](https://github.com/umayado17/synology-search-agent/blob/main/docs/background.md). Two articles on Zenn (in Japanese) tell more: [how it works and what was checked on a real NAS](https://zenn.dev/n_hiraoka/articles/8514c11759816d), and [how it was built with three AI agents in five days](https://zenn.dev/n_hiraoka/articles/c762c226585225).
 
 ## Tested environment
 
@@ -221,6 +221,8 @@ The steps for checking on a real NAS are in [docs/nas-verification.md](https://g
 ## See also
 
 - [atkaper/synology-universal-search-cli](https://github.com/atkaper/synology-universal-search-cli): an earlier command-line tool that calls the Universal Search API from a shell. It is what started this project.
+- [Article: how it works](https://zenn.dev/n_hiraoka/articles/8514c11759816d) (Zenn, Japanese)
+- [Article: how it was built with three AI agents](https://zenn.dev/n_hiraoka/articles/c762c226585225) (Zenn, Japanese)
 
 ## Changes and security
 
