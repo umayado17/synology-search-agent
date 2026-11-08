@@ -1,0 +1,57 @@
+name: publish
+
+# 手で動かす（Actions の画面の "Run workflow"）。
+# PyPI へは Trusted Publishing で出すので、トークンは要らない。
+# PyPI に出したあと、registry を選んで動かすと MCP Registry にも載せる。
+on:
+  workflow_dispatch:
+    inputs:
+      target:
+        description: "pypi = PyPI に出す / registry = MCP Registry に載せる（PyPI に出したあと）"
+        type: choice
+        options: [pypi, registry]
+        default: pypi
+
+permissions:
+  contents: read
+
+jobs:
+  pypi:
+    if: inputs.target == 'pypi'
+    runs-on: ubuntu-latest
+    environment:
+      name: pypi
+      url: https://pypi.org/project/nas-search-mcp/
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Run tests (standard library only)
+        run: python -m unittest discover -s tests
+      - name: Build
+        run: |
+          python -m pip install --upgrade build twine
+          python -m build
+          python -m twine check --strict dist/*
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+
+  registry:
+    if: inputs.target == 'registry'
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install mcp-publisher
+        run: |
+          os=$(uname -s | tr '[:upper:]' '[:lower:]')
+          arch=$(uname -m | sed 's/x86_64/amd64/;s/aarch64/arm64/')
+          curl -fsSL "https://github.com/modelcontextprotocol/registry/releases/latest/download/mcp-publisher_${os}_${arch}.tar.gz" | tar xz mcp-publisher
+      - name: Publish to the MCP Registry
+        run: |
+          ./mcp-publisher login github-oidc
+          ./mcp-publisher publish
