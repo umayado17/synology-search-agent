@@ -11,6 +11,22 @@ from test_client import ClientTestBase, client
 
 
 class ConnectionReuseTest(ClientTestBase):
+    def setUp(self):
+        super().setUp()
+        # 使い回しは ~/.ssh があるときだけ。CI には無いので、短いパスに仮の HOME を作る
+        self.home = tempfile.mkdtemp(dir="/tmp")
+        os.mkdir(os.path.join(self.home, ".ssh"))
+        self.old_home = os.environ.get("HOME")
+        os.environ["HOME"] = self.home
+
+    def tearDown(self):
+        if self.old_home is None:
+            os.environ.pop("HOME", None)
+        else:
+            os.environ["HOME"] = self.old_home
+        shutil.rmtree(self.home, ignore_errors=True)
+        super().tearDown()
+
     def options(self, argv):
         return argv[argv.index("-T") + 1:-2]
 
