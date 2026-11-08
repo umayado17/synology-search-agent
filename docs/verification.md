@@ -199,6 +199,16 @@ GitHub Actions の `publish.yml`（手で動かす。Trusted Publishing、外部
 
 出すまでに workflow が3回止まりました（どれも PyPI に送る前）。外部の Action がリポジトリの設定で許されていなかったこと、接続の使い回しのテストが `~/.ssh` のある環境でしか通らなかったこと、`packaging/` フォルダが同じ名前の Python の部品を隠したことです。どれも直しました。
 
+### MCP Registry への登録（2026-11-08）
+
+v0.9.0 のリリースのあと、main から `publish.yml` を `registry` で動かしました（`mcp-publisher login github-oidc` と `publish`）。成功し、`io.github.umayado17/nas-search-mcp` 0.6.0 が登録されました。
+
+| 確認 | 結果 |
+|---|---|
+| Registry の API（`/v0/servers?search=io.github.umayado17/nas-search-mcp`） | 0.6.0、パッケージは PyPI の `nas-search-mcp`。状態は `active`、`isLatest: true`、登録は 2026-11-08T02:01:53Z |
+
+Glama には `glama.json` を置いただけで、載ったかどうかはまだ確かめていません。
+
 ## 検索を速くする試み（2026-11-06〜07、v0.9.0 の開発中）
 
 1回の検索のおおよその内訳（この Mac から、Tailscale 経由）: ssh の接続 約 0.47 秒、NAS の入口と検索セッションの受け渡し 約 0.1 秒、DSM の検索 API 1回 約 1.1 秒。5件で約 1.7 秒、100件（API 2回）で約 2.9〜3.3 秒でした。
