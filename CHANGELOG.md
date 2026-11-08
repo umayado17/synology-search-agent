@@ -2,12 +2,13 @@
 
 `unisearch` (runs on the NAS) and `nas-search` (runs on the agent's machine) have their own version numbers. The JSON output has `schema_version: 1` in both.
 
-## unisearch 0.9.0 / nas-search 0.6.0 (unreleased)
+## unisearch 0.9.0 / nas-search 0.6.0 (2026-11-08)
 
 - **MCP server.** New `clients/nas-search-mcp` offers `search` and `status` as MCP tools (stdio), so MCP apps such as Claude Code can search without a shell. It runs `nas-search` next to it, so the settings, key, JSON and exit codes are the same. Standard library only. It sends progress notifications during long searches when the app asks for them, and stops the search when the app cancels it.
 - **Faster repeated calls.** `nas-search` keeps the SSH connection open for 60 seconds (`ControlMaster`) and reuses it, which saved about 0.1–0.3 s per call in our tests. Turn it off with `reuse_connection=no` in `client.conf`.
-- **PyPI package `nas-search-mcp`.** `pipx install nas-search-mcp` (or `uvx nas-search-mcp`) installs the MCP server and `nas-search` on the agent's machine. The files are the same as in `clients/`. `server.json` (MCP Registry) and `glama.json` (Glama) are added.
+- **PyPI package `nas-search-mcp`** (0.6.0, the same version as `nas-search`). `pipx install nas-search-mcp` (or `uvx nas-search-mcp`) installs the MCP server and `nas-search` on the agent's machine. The files are the same as in `clients/`. `server.json` (MCP Registry) and `glama.json` (Glama) are added.
 - **The README is now in English** (`README.md`); the Japanese one moved to `README.ja.md`. Both show the MCP setup near the top.
+- Docs: AGENTS.md, SECURITY.md, the agent skill and docs/agent-setup.md now cover the MCP server too.
 - No change on the NAS side apart from the version number; reinstalling `unisearch` is not needed.
 
 ## unisearch 0.8.0 / nas-search 0.5.0 (2026-11-07)

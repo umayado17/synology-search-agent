@@ -187,6 +187,17 @@ Claude Code の設定（`claude mcp add`）には登録していません。
 
 長い検索（数十秒以上）、進み具合の通知、アプリからの取り消しは、Claude Desktop ではまだ確かめていません。
 
+### PyPI に出したパッケージの確認（2026-11-08）
+
+GitHub Actions の `publish.yml`（手で動かす。Trusted Publishing、外部の Action は使わない）で nas-search-mcp 0.6.0 を PyPI に出しました。そのあと、この Mac で PyPI から入れて確かめました。
+
+| 確認 | 結果 |
+|---|---|
+| PyPI の情報（JSON API） | 0.6.0。wheel と sdist の2つ。説明文に `mcp-name: io.github.umayado17/nas-search-mcp` がある。リンクは新しいリポジトリ名 |
+| 空のキャッシュ・最小限の `PATH` で `uvx nas-search-mcp` を起動し、`initialize` と `search`（`test`、`limit` 3）を送る | 成功。版 0.6.0、`isError: false`、3件、`next_offset` 3 |
+
+出すまでに workflow が3回止まりました（どれも PyPI に送る前）。外部の Action がリポジトリの設定で許されていなかったこと、接続の使い回しのテストが `~/.ssh` のある環境でしか通らなかったこと、`packaging/` フォルダが同じ名前の Python の部品を隠したことです。どれも直しました。
+
 ## 検索を速くする試み（2026-11-06〜07、v0.9.0 の開発中）
 
 1回の検索のおおよその内訳（この Mac から、Tailscale 経由）: ssh の接続 約 0.47 秒、NAS の入口と検索セッションの受け渡し 約 0.1 秒、DSM の検索 API 1回 約 1.1 秒。5件で約 1.7 秒、100件（API 2回）で約 2.9〜3.3 秒でした。

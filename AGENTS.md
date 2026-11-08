@@ -2,7 +2,15 @@
 
 ## 目的と範囲
 
-`unisearch` は Synology NAS の Universal Search インデックスを使う、sudo 不要の検索 CLI です。ファイルの更新やインデックスの変更はしません。
+Synology NAS の Universal Search インデックスを使う、sudo 不要の検索ツールです。AI エージェントからは MCP サーバーとしても、コマンド（CLI）としても使えます。ファイルの更新やインデックスの変更はしません。
+
+| ファイル | 動く場所 | 役目 |
+|---|---|---|
+| `unisearch` | NAS | 検索セッションと、DSM の検索 API を呼ぶ部分 |
+| `clients/nas-search` | エージェント側 | SSH で `unisearch` を呼ぶコマンド |
+| `clients/nas-search-mcp` | エージェント側 | `nas-search` を MCP の道具（`search`・`status`）として出すサーバー |
+
+エージェント側の2つは PyPI のパッケージ `nas-search-mcp` としても配っています（`pyproject.toml`）。
 
 ## 動作が確認できた API の条件（変える前に docs/verification.md を読む）
 
@@ -33,4 +41,6 @@
 - Python 3.8 互換、標準ライブラリのみ
 - テストは unittest（pytest なし）: `python3 -m unittest discover -s tests -v`
 - CLI のオプション・JSON・終了コードを変えたら `docs/cli-spec.md` も直す
+- MCP の道具（名前・引数・説明）を変えたら、`README.md` と `README.ja.md` の道具の表と `tests/test_mcp.py` も直す
+- `nas-search-mcp` の版を上げたら、`server.json` の版も合わせる（`tests/test_mcp.py` が確かめる）
 - 実機で確かめたら、結果を `docs/verification.md` に追記する。パスやファイル名は伏せ字にする

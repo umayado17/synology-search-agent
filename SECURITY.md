@@ -13,6 +13,8 @@ Never include passwords, OTP codes, SIDs, private keys, or real host names, user
 In scope:
 
 - `unisearch` letting an agent do more than search (for example, a shell, other commands, or port forwarding through the agent key)
+- `nas-search` or the MCP server `nas-search-mcp` passing a query or tool argument to a shell or into SSH options, or doing anything other than search and status
+- The PyPI package `nas-search-mcp` containing code that differs from `clients/` in this repository
 - Results from outside the allowed folders, or the number of out-of-scope results, reaching the agent
 - Passwords, OTP codes or SIDs written to files, logs or output
 - Another local user reaching the search session

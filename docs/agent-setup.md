@@ -115,7 +115,22 @@ mkdir -p ~/.claude/skills && ln -s "$PWD/skills/nas-search" ~/.claude/skills/nas
 
 ### MCP で使う場合（v0.9.0〜）
 
-シェルを使えないアプリや、MCP で道具を渡したいときは、`nas-search` と同じ場所に `nas-search-mcp` を置きます。設定（`client.conf`）と鍵は `nas-search` のものをそのまま使います。
+シェルを使えないアプリや、MCP で道具を渡したいときに使います。設定（`client.conf`）と鍵は `nas-search` のものをそのまま使います。
+
+いちばん簡単なのは PyPI から入れる方法です。`nas-search` も一緒に入ります。
+
+```bash
+# uv が入っている場合（Claude Code）
+claude mcp add nas-search -- uvx nas-search-mcp
+
+# pipx で入れる場合
+pipx install nas-search-mcp
+claude mcp add nas-search -- nas-search-mcp
+```
+
+設定ファイルに書くアプリ（Claude Desktop など）では `{"mcpServers": {"nas-search": {"command": "uvx", "args": ["nas-search-mcp"]}}}` と書きます。アプリがシェルの `PATH` を見ない場合は、`command` を `which uvx` で出るフルパスにします。
+
+リポジトリのファイルを直接使う場合は、`nas-search` と同じ場所に `nas-search-mcp` を置きます。
 
 ```bash
 cp clients/nas-search-mcp ~/.local/bin/nas-search-mcp && chmod 755 ~/.local/bin/nas-search-mcp
