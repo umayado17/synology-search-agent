@@ -40,9 +40,9 @@ path = "clients/nas-search-mcp"
 bypass-selection = true
 
 [tool.hatch.build.targets.wheel.force-include]
-"packaging/__init__.py" = "nas_search_mcp/__init__.py"
+"pypi/__init__.py" = "nas_search_mcp/__init__.py"
 "clients/nas-search" = "nas_search_mcp/nas_search.py"
 "clients/nas-search-mcp" = "nas_search_mcp/server.py"
 
 [tool.hatch.build.targets.sdist]
-only-include = ["clients", "packaging", "README.md", "LICENSE", "pyproject.toml"]
+only-include = ["clients", "pypi", "README.md", "LICENSE", "pyproject.toml"]

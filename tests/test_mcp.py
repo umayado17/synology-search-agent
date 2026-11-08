@@ -311,7 +311,7 @@ class PackageLayoutTest(unittest.TestCase):
     def test_pyproject_maps_existing_files(self):
         with open(os.path.join(ROOT, "pyproject.toml"), encoding="utf-8") as handle:
             text = handle.read()
-        for source in ("packaging/__init__.py", "clients/nas-search", "clients/nas-search-mcp"):
+        for source in ("pypi/__init__.py", "clients/nas-search", "clients/nas-search-mcp"):
             self.assertIn('"%s" = ' % source, text)
             self.assertTrue(os.path.isfile(os.path.join(ROOT, source)), source)
 
