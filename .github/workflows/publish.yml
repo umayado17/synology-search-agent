@@ -36,8 +36,21 @@ jobs:
           python -m pip install --upgrade build twine
           python -m build
           python -m twine check --strict dist/*
+      # このリポジトリは自分か GitHub の Actions しか使わない設定なので、
+      # pypa/gh-action-pypi-publish の代わりに PyPI の手順どおり鍵をもらって twine で出す。
+      # もらう鍵は数分で切れ、PyPI の Trusted Publisher の登録と合うときだけ発行される。
       - name: Publish to PyPI
-        uses: pypa/gh-action-pypi-publish@release/v1
+        run: |
+          set -euo pipefail
+          audience=$(curl -fsS https://pypi.org/_/oidc/audience | jq -r .audience)
+          oidc=$(curl -fsS -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "$ACTIONS_ID_TOKEN_REQUEST_URL&audience=$audience" | jq -r .value)
+          echo "::add-mask::$oidc"
+          token=$(jq -n --arg t "$oidc" '{token: $t}' \
+            | curl -fsS -X POST https://pypi.org/_/oidc/mint-token -H "Content-Type: application/json" -d @- \
+            | jq -r .token)
+          echo "::add-mask::$token"
+          TWINE_USERNAME=__token__ TWINE_PASSWORD="$token" python -m twine upload --non-interactive dist/*
 
   registry:
     if: inputs.target == 'registry'
