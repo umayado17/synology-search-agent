@@ -195,6 +195,7 @@ GitHub Actions の `publish.yml`（手で動かす。Trusted Publishing、外部
 |---|---|
 | PyPI の情報（JSON API） | 0.6.0。wheel と sdist の2つ。説明文に `mcp-name: io.github.umayado17/nas-search-mcp` がある。リンクは新しいリポジトリ名 |
 | 空のキャッシュ・最小限の `PATH` で `uvx nas-search-mcp` を起動し、`initialize` と `search`（`test`、`limit` 3）を送る | 成功。版 0.6.0、`isError: false`、3件、`next_offset` 3 |
+| Claude Desktop の設定を `uvx --system-certs nas-search-mcp`（`uvx` は絶対パス）に替えて再起動し、Code タブから `status` と `search`（`test`、`limit` 3）を呼ぶ | 成功。PyPI から入れたものが起動し、3件、`next_offset` 3。この Mac のネットワークでは、`--system-certs` が無いと `uvx` が証明書の確認（`UnknownIssuer`）で PyPI に繋がらなかった |
 
 出すまでに workflow が3回止まりました（どれも PyPI に送る前）。外部の Action がリポジトリの設定で許されていなかったこと、接続の使い回しのテストが `~/.ssh` のある環境でしか通らなかったこと、`packaging/` フォルダが同じ名前の Python の部品を隠したことです。どれも直しました。
 
