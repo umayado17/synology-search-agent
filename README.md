@@ -55,6 +55,8 @@ Apps with a JSON config (Claude Desktop, Cursor and others):
 
 Desktop apps may not see your shell's `PATH`. If the app cannot start it, write the full path of `uvx` (from `which uvx`) as `command`.
 
+If `uvx` fails with `invalid peer certificate: UnknownIssuer` (common on networks that inspect HTTPS, such as office networks), add `--system-certs` so it uses the certificates your OS trusts: `"args": ["--system-certs", "nas-search-mcp"]`, or `uvx --system-certs nas-search-mcp`.
+
 | Tool | What it does |
 |---|---|
 | `search` | Search by file name and document text. Arguments: `query`, `limit` (1-100), `offset`, `max_results` (pages automatically, up to 1,000). Returns the [JSON below](#output) |

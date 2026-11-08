@@ -128,7 +128,7 @@ pipx install nas-search-mcp
 claude mcp add nas-search -- nas-search-mcp
 ```
 
-設定ファイルに書くアプリ（Claude Desktop など）では `{"mcpServers": {"nas-search": {"command": "uvx", "args": ["nas-search-mcp"]}}}` と書きます。アプリがシェルの `PATH` を見ない場合は、`command` を `which uvx` で出るフルパスにします。
+設定ファイルに書くアプリ（Claude Desktop など）では `{"mcpServers": {"nas-search": {"command": "uvx", "args": ["nas-search-mcp"]}}}` と書きます。アプリがシェルの `PATH` を見ない場合は、`command` を `which uvx` で出るフルパスにします。`uvx` が `invalid peer certificate: UnknownIssuer` で失敗する場合（職場など、HTTPS を中継するネットワーク）は、`args` の先頭に `--system-certs` を足します。
 
 リポジトリのファイルを直接使う場合は、`nas-search` と同じ場所に `nas-search-mcp` を置きます。
 

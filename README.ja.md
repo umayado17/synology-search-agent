@@ -114,6 +114,8 @@ claude mcp add nas-search -- uvx nas-search-mcp
 
 JSON で設定するアプリ（Claude Desktop、Cursor など）では、`"command": "uvx", "args": ["nas-search-mcp"]` と書きます。アプリがシェルの `PATH` を見ない場合は、`which uvx` で出る絶対パスを `command` に書きます。
 
+`uvx` が `invalid peer certificate: UnknownIssuer` で失敗する場合（職場など、HTTPS を中継するネットワークでよく起きます）は、`--system-certs` を足して、OS が信頼している証明書を使わせます。`"args": ["--system-certs", "nas-search-mcp"]`、またはコマンドなら `uvx --system-certs nas-search-mcp` です。
+
 道具は `search`（`query`・`limit`・`offset`・`max_results`）と `status` の2つで、どちらも読み取りだけです。NAS 側の準備（上の「使う前の準備」）と、人が始める検索セッションは、コマンドで使う場合と同じく必要です。PyPI を使わない場合は、`clients/nas-search` と `clients/nas-search-mcp` を同じフォルダに置き、`python3 <フォルダ>/nas-search-mcp` で起動します。
 
 ## 安全のための設計
